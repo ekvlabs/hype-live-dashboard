@@ -57,6 +57,30 @@ body {
   margin-bottom: 18px;
 }
 
+.topbar-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.bot-link {
+  border: 1px solid rgba(69, 211, 195, 0.62);
+  border-radius: 6px;
+  color: var(--cyan);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 10px 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.bot-link:hover {
+  background: rgba(69, 211, 195, 0.1);
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: var(--cyan);
@@ -323,6 +347,10 @@ h2 {
   .foot {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
   }
 }
 

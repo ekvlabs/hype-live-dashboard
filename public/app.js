@@ -20,6 +20,7 @@ const {
 } = window.LightweightCharts;
 
 const elements = {
+  alertBotLink: document.querySelector("#alertBotLink"),
   status: document.querySelector("#status"),
   statusText: document.querySelector("#statusText"),
   twap1h: document.querySelector("#twap1h"),
@@ -75,6 +76,7 @@ let hasAppliedInitialRange = false;
 let isSyncingRange = false;
 let isSyncingCrosshair = false;
 
+configureAlertBotLink();
 wireRangeControls();
 wireResolutionControls();
 wireResize();
@@ -313,6 +315,26 @@ function apiPath(path) {
 
 function normalizeApiBaseUrl(value) {
   return String(value ?? "").replace(/\/+$/, "");
+}
+
+function configureAlertBotLink() {
+  const botUrl = normalizeExternalUrl(window.HYPE_CONFIG?.botUrl ?? "");
+  if (!botUrl) {
+    elements.alertBotLink.hidden = true;
+    elements.alertBotLink.removeAttribute("href");
+    return;
+  }
+
+  elements.alertBotLink.href = botUrl;
+  elements.alertBotLink.hidden = false;
+}
+
+function normalizeExternalUrl(value) {
+  const url = String(value ?? "").trim();
+  if (!/^https:\/\/t\.me\/[a-zA-Z0-9_]+$/.test(url)) {
+    return "";
+  }
+  return url;
 }
 
 function startPolling() {

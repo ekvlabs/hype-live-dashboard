@@ -19,6 +19,8 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(html, /href="\.\/styles\.css/);
   assert.match(html, /src="\.\/vendor\/lightweight-charts\.standalone\.production\.js/);
   assert.match(html, /src="\.\/app\.js/);
+  assert.match(html, /id="alertBotLink"/);
+  assert.match(html, /Alert Bot/);
   assert.match(html, /TWAP 1h/);
   assert.match(html, /TWAP 24h/);
   assert.match(html, /id="twap1hChart"/);
@@ -32,6 +34,8 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /key: "next24h"/);
   assert.match(app, /const POLL_INTERVAL_MS = 1_000/);
   assert.match(app, /apiPath/);
+  assert.match(app, /configureAlertBotLink/);
+  assert.match(app, /botUrl/);
   assert.match(app, /new EventSource\(apiPath\("\/api\/events"\)\)/);
   assert.match(app, /fetch\(apiPath\("\/api\/snapshot"\)/);
   assert.match(app, /rightPriceScale/);

@@ -8,7 +8,7 @@ import { LiveDataService } from "./data-source.js";
 import { apiCorsHeaders } from "./cors.js";
 import { compactState, sseFrame } from "./events.js";
 import { HistoryStore } from "./history-store.js";
-import { TelegramNotifier } from "./telegram-notifier.js";
+import { TelegramAlertBot } from "./telegram-alert-bot.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = join(__dirname, "..");
@@ -18,9 +18,11 @@ const port = Number(process.env.PORT ?? 4173);
 const host = process.env.HOST ?? "127.0.0.1";
 const historyFile = process.env.HISTORY_FILE ?? join(rootDir, "data", "history.ndjson");
 
+const telegramBot = TelegramAlertBot.fromEnv(process.env);
+
 const service = new LiveDataService({
   historyStore: new HistoryStore(historyFile),
-  notifier: TelegramNotifier.fromEnv(process.env),
+  notifier: telegramBot,
 });
 
 const server = createServer(async (req, res) => {
@@ -62,6 +64,7 @@ const server = createServer(async (req, res) => {
 await service.start().catch((error) => {
   console.error("Initial data fetch failed:", error.message);
 });
+telegramBot.start();
 
 server.listen(port, host, () => {
   console.log(`HYPE live dashboard: http://${host}:${port}`);
@@ -154,6 +157,7 @@ function contentType(filePath) {
 }
 
 function shutdown() {
+  telegramBot.stop();
   service.stop();
   server.close(() => process.exit(0));
 }
