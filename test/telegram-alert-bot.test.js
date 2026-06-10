@@ -53,6 +53,42 @@ test("TelegramAlertBot sends threshold alerts using per-user window and cooldown
   assert.equal(store.getUser(10).lastAlertAt, 6_000);
 });
 
+test("TelegramAlertBot aborts in-flight polling when stopped", async () => {
+  const store = new BotStore(":memory:");
+  let signalSeen = false;
+  let aborted = false;
+  const bot = new TelegramAlertBot({
+    botToken: "token",
+    store,
+    fetchFn: (_url, options) => {
+      signalSeen = Boolean(options.signal);
+      return new Promise((resolve) => {
+        options.signal.addEventListener("abort", () => {
+          aborted = true;
+          resolve({ ok: false, status: 499 });
+        });
+      });
+    },
+  });
+
+  const polling = bot.pollUpdates();
+  await Promise.resolve();
+  bot.stop();
+
+  assert.equal(await polling, false);
+  assert.equal(signalSeen, true);
+  assert.equal(aborted, true);
+});
+
+test("server shutdown has a bounded forced close path", async () => {
+  const serverSource = await import("node:fs/promises").then(({ readFile }) =>
+    readFile(new URL("../src/server.js", import.meta.url), "utf8"),
+  );
+
+  assert.match(serverSource, /closeAllConnections/);
+  assert.match(serverSource, /setTimeout/);
+});
+
 function messageUpdate(text, from) {
   return {
     update_id: Math.floor(Math.random() * 1_000_000),

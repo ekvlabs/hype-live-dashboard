@@ -73,6 +73,8 @@ server.listen(port, host, () => {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+let isShuttingDown = false;
+
 function handleEvents(req, res) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -157,7 +159,27 @@ function contentType(filePath) {
 }
 
 function shutdown() {
+  if (isShuttingDown) {
+    return;
+  }
+  isShuttingDown = true;
   telegramBot.stop();
   service.stop();
-  server.close(() => process.exit(0));
+  server.closeIdleConnections?.();
+
+  const closeConnections = setTimeout(() => {
+    server.closeAllConnections?.();
+  }, 1_000);
+  closeConnections.unref?.();
+
+  const forceExit = setTimeout(() => {
+    process.exit(0);
+  }, 5_000);
+  forceExit.unref?.();
+
+  server.close(() => {
+    clearTimeout(closeConnections);
+    clearTimeout(forceExit);
+    process.exit(0);
+  });
 }

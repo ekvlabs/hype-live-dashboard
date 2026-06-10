@@ -24,6 +24,7 @@ export class TelegramAlertBot {
     this.samples = [];
     this.pollTimer = null;
     this.polling = false;
+    this.pollAbortController = null;
   }
 
   static fromEnv(env = process.env) {
@@ -61,6 +62,7 @@ export class TelegramAlertBot {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    this.pollAbortController?.abort();
   }
 
   async pollUpdates() {
@@ -69,16 +71,22 @@ export class TelegramAlertBot {
     }
 
     this.polling = true;
+    const abortController = new AbortController();
+    this.pollAbortController = abortController;
     try {
       const response = await this.fetchFn(this.apiUrl("getUpdates"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortController.signal,
         body: JSON.stringify({
           offset: this.offset,
           timeout: this.pollTimeoutSeconds,
           allowed_updates: ["message"],
         }),
       });
+      if (abortController.signal.aborted) {
+        return false;
+      }
       if (!response.ok) {
         throw new Error(`Telegram getUpdates failed: ${response.status}`);
       }
@@ -88,7 +96,15 @@ export class TelegramAlertBot {
         await this.handleUpdate(update);
       }
       return true;
+    } catch (error) {
+      if (abortController.signal.aborted || error.name === "AbortError") {
+        return false;
+      }
+      throw error;
     } finally {
+      if (this.pollAbortController === abortController) {
+        this.pollAbortController = null;
+      }
       this.polling = false;
     }
   }
