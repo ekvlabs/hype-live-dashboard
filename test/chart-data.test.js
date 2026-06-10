@@ -5,8 +5,11 @@ import {
   NEGATIVE_TWAP_COLOR,
   historyToLineData,
   historyToPriceBars,
+  minimumBarSpacingForRange,
   needsVerticalAutoscale,
+  nextLiveVisibleRange,
   normalizedHistory,
+  shouldFollowLiveRange,
   visibleDataRange,
 } from "../public/chart-data.js";
 
@@ -69,4 +72,23 @@ test("needsVerticalAutoscale detects values outside the current visible price ra
   assert.equal(needsVerticalAutoscale(bars, { from: 54.5, to: 57 }), true);
   assert.equal(needsVerticalAutoscale(line, { from: 95, to: 120 }, { from: 11, to: 12 }), true);
   assert.equal(needsVerticalAutoscale(line, { from: 80, to: 120 }, { from: 10, to: 11 }), false);
+});
+
+test("shouldFollowLiveRange tracks whether the chart is already at the live edge", () => {
+  assert.equal(shouldFollowLiveRange(null, 160), true);
+  assert.equal(shouldFollowLiveRange({ from: 100, to: 160 }, 160), true);
+  assert.equal(shouldFollowLiveRange({ from: 100, to: 159 }, 160), true);
+  assert.equal(shouldFollowLiveRange({ from: 100, to: 155 }, 160), false);
+});
+
+test("nextLiveVisibleRange advances the live window without changing current zoom", () => {
+  assert.deepEqual(nextLiveVisibleRange({ from: 100, to: 160 }, 1, 161), { from: 101, to: 161 });
+  assert.deepEqual(nextLiveVisibleRange(null, 1, 7_200), { from: 3_600, to: 7_200 });
+  assert.equal(nextLiveVisibleRange({ from: 100, to: 100 }, 1, 161), null);
+});
+
+test("minimumBarSpacingForRange allows 12h of 15s bars on mobile", () => {
+  assert.equal(minimumBarSpacingForRange(390, 12, 15) <= 0.13, true);
+  assert.equal(minimumBarSpacingForRange(390, 24, 15) <= 0.07, true);
+  assert.equal(minimumBarSpacingForRange(1200, 1, 1) <= 0.31, true);
 });

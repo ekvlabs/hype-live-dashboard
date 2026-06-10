@@ -2,8 +2,11 @@ import {
   RESOLUTIONS,
   historyToLineData,
   historyToPriceBars,
+  minimumBarSpacingForRange,
   needsVerticalAutoscale,
+  nextLiveVisibleRange,
   normalizedHistory,
+  shouldFollowLiveRange,
 } from "./chart-data.js";
 
 const POLL_INTERVAL_MS = 1_000;
@@ -72,6 +75,7 @@ let selectedHours = DEFAULT_RANGE_HOURS;
 let selectedResolution = RESOLUTIONS[0];
 let lastState = null;
 let pollTimer = null;
+let sseFallbackTimer = null;
 let hasAppliedInitialRange = false;
 let isSyncingRange = false;
 let isSyncingCrosshair = false;
@@ -81,6 +85,7 @@ wireRangeControls();
 wireResolutionControls();
 wireResize();
 wireChartSync();
+applyTimeScaleDensity();
 connectEvents();
 fetchSnapshot();
 
@@ -161,7 +166,7 @@ function chartOptions(container) {
       borderVisible: false,
       rightOffset: 4,
       barSpacing: 8,
-      minBarSpacing: 0.5,
+      minBarSpacing: 0.02,
       rightBarStaysOnScroll: true,
       shiftVisibleRangeOnNewBar: true,
     },
@@ -190,6 +195,7 @@ function wireRangeControls() {
       for (const item of elements.rangeButtons.filter((item) => item.dataset.range)) {
         item.classList.toggle("active", item === button);
       }
+      applyTimeScaleDensity();
       render(lastState, { forceRange: true });
     });
   }
@@ -203,6 +209,7 @@ function wireResolutionControls() {
       for (const item of elements.resolutionButtons) {
         item.classList.toggle("active", item === button);
       }
+      applyTimeScaleDensity();
       render(lastState, { forceRange: true });
     });
   }
@@ -216,10 +223,23 @@ function wireResize() {
         height: CHART_HEIGHT,
       });
     }
+    applyTimeScaleDensity();
   });
 
   for (const entry of chartEntries) {
     resizeObserver.observe(entry.container);
+  }
+}
+
+function applyTimeScaleDensity() {
+  for (const entry of chartEntries) {
+    entry.chart.timeScale().applyOptions({
+      minBarSpacing: minimumBarSpacingForRange(
+        entry.container.clientWidth,
+        selectedHours,
+        selectedResolution.seconds,
+      ),
+    });
   }
 }
 
@@ -288,14 +308,23 @@ function connectEvents() {
   }
 
   const source = new EventSource(apiPath("/api/events"));
+  sseFallbackTimer = setTimeout(() => {
+    startPolling();
+  }, 4_000);
+  source.onopen = () => {
+    stopPolling();
+  };
   source.addEventListener("snapshot", (event) => {
+    markRealtimeEventReceived();
     mergeState(JSON.parse(event.data));
   });
   source.addEventListener("history-point", (event) => {
+    markRealtimeEventReceived();
     appendHistoryPoint(JSON.parse(event.data).point);
   });
   source.onerror = () => {
     setStatus({ ok: false, message: "reconnecting" });
+    startPolling();
   };
 }
 
@@ -342,6 +371,22 @@ function startPolling() {
     return;
   }
   pollTimer = setInterval(fetchSnapshot, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+  if (!pollTimer) {
+    return;
+  }
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+function markRealtimeEventReceived() {
+  if (sseFallbackTimer) {
+    clearTimeout(sseFallbackTimer);
+    sseFallbackTimer = null;
+  }
+  stopPolling();
 }
 
 function render(state, options = {}) {
@@ -392,6 +437,8 @@ function render(state, options = {}) {
   if (options.forceRange || !hasAppliedInitialRange) {
     applyVisibleTimeWindow(history);
     hasAppliedInitialRange = true;
+  } else if (options.followLive) {
+    applyLiveVisibleWindow(history, options.visibleRange);
   }
 }
 
@@ -409,6 +456,10 @@ function appendHistoryPoint(point) {
   }
 
   const previous = lastState ?? { history: [], config: {} };
+  const previousHistory = normalizedHistory(previous.history ?? []);
+  const previousLastTime = previousHistory.at(-1)?.time;
+  const visibleRange = chartEntries[0]?.chart.timeScale().getVisibleRange() ?? null;
+  const followLive = shouldFollowLiveRange(visibleRange, previousLastTime);
   const config = previous.config ?? {};
   const maxHistoryHours = Number(config.maxHistoryHours) || 168;
   const historyLimit = Number(config.historyLimit) || 604_800;
@@ -420,6 +471,9 @@ function appendHistoryPoint(point) {
   render({
     ...previous,
     history,
+  }, {
+    followLive,
+    visibleRange,
   });
 }
 
@@ -446,6 +500,19 @@ function applyVisibleTimeWindow(history) {
   const from = Math.max(firstTime, lastTime - selectedHours * 60 * 60);
   for (const entry of chartEntries) {
     entry.chart.timeScale().setVisibleRange({ from, to: lastTime });
+  }
+  autoScaleAllVertical();
+}
+
+function applyLiveVisibleWindow(history, previousVisibleRange) {
+  const lastTime = history.at(-1)?.time;
+  const range = nextLiveVisibleRange(previousVisibleRange, selectedHours, lastTime);
+  if (!range) {
+    return;
+  }
+
+  for (const entry of chartEntries) {
+    entry.chart.timeScale().setVisibleRange(range);
   }
   autoScaleAllVertical();
 }

@@ -37,7 +37,11 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /configureAlertBotLink/);
   assert.match(app, /botUrl/);
   assert.match(app, /new EventSource\(apiPath\("\/api\/events"\)\)/);
+  assert.match(app, /source\.onopen = \(\) =>/);
   assert.match(app, /fetch\(apiPath\("\/api\/snapshot"\)/);
+  assert.match(app, /source\.onerror = \(\) => \{/);
+  assert.match(app, /startPolling\(\);/);
+  assert.match(app, /stopPolling\(\);/);
   assert.match(app, /rightPriceScale/);
   assert.match(app, /leftPriceScale:\s*\{\s*visible:\s*false/s);
   assert.match(app, /syncVisibleRange/);

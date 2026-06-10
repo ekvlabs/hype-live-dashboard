@@ -7,6 +7,8 @@ export const RESOLUTIONS = [
 ];
 
 export const NEGATIVE_TWAP_COLOR = "#e34b4b";
+export const DEFAULT_MIN_BAR_SPACING = 0.5;
+export const ABSOLUTE_MIN_BAR_SPACING = 0.02;
 
 export function normalizedHistory(history) {
   const byTime = new Map();
@@ -102,6 +104,50 @@ export function needsVerticalAutoscale(data, priceRange, timeRange = null) {
   }
 
   return dataRange.min < from || dataRange.max > to;
+}
+
+export function shouldFollowLiveRange(visibleRange, previousLastTime, toleranceSeconds = 2) {
+  if (!visibleRange) {
+    return true;
+  }
+
+  const liveEdge = Number(previousLastTime);
+  const visibleTo = Number(visibleRange.to);
+  if (!Number.isFinite(liveEdge) || !Number.isFinite(visibleTo)) {
+    return true;
+  }
+
+  return visibleTo >= liveEdge - Math.max(0, Number(toleranceSeconds) || 0);
+}
+
+export function nextLiveVisibleRange(visibleRange, selectedHours, nextLastTime) {
+  const to = Number(nextLastTime);
+  if (!Number.isFinite(to)) {
+    return null;
+  }
+
+  const selectedSpan = Math.max(1, Number(selectedHours) || 1) * 60 * 60;
+  const hasCurrentRange =
+    visibleRange && Number.isFinite(Number(visibleRange.from)) && Number.isFinite(Number(visibleRange.to));
+  const currentSpan = hasCurrentRange ? Number(visibleRange.to) - Number(visibleRange.from) : selectedSpan;
+  if (currentSpan <= 0) {
+    return null;
+  }
+
+  return { from: to - currentSpan, to };
+}
+
+export function minimumBarSpacingForRange(containerWidth, selectedHours, resolutionSeconds) {
+  const width = Math.max(1, Number(containerWidth) || 1);
+  const hours = Math.max(1, Number(selectedHours) || 1);
+  const seconds = Math.max(1, Number(resolutionSeconds) || 1);
+  const bars = Math.max(1, (hours * 60 * 60) / seconds);
+  const requiredSpacing = (width * 0.92) / bars;
+
+  return Math.max(
+    ABSOLUTE_MIN_BAR_SPACING,
+    Math.min(DEFAULT_MIN_BAR_SPACING, Number(requiredSpacing.toFixed(4))),
+  );
 }
 
 function bucketHistory(history, resolutionSeconds) {
