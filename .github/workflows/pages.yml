@@ -30,7 +30,7 @@ jobs:
           HYPE_API_BASE_URL: ${{ vars.HYPE_API_BASE_URL || 'https://108-61-210-39.sslip.io' }}
           TELEGRAM_BOT_URL: ${{ vars.TELEGRAM_BOT_URL || 'https://t.me/hypedashboard_bot' }}
         run: |
-          node -e "const fs=require('fs'); const apiBaseUrl=process.env.HYPE_API_BASE_URL; const botUrl=process.env.TELEGRAM_BOT_URL; fs.writeFileSync('public/config.js', `window.HYPE_CONFIG = { apiBaseUrl: ${JSON.stringify(apiBaseUrl)}, botUrl: ${JSON.stringify(botUrl)} };\n`);"
+          node scripts/write-pages-config.mjs
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

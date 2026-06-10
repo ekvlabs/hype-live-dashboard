@@ -12,3 +12,20 @@ test('deploy update script pulls main safely and restarts the service only after
   assert.match(script, /systemctl restart "\$\{SERVICE_NAME\}"/);
   assert.doesNotMatch(script, /git reset --hard/);
 });
+
+test('pages workflow generates config without inline shell substitutions', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/pages.yml', import.meta.url), 'utf8');
+
+  assert.match(workflow, /node scripts\/write-pages-config\.mjs/);
+  assert.doesNotMatch(workflow, /node -e/);
+  assert.doesNotMatch(workflow, /\$\{JSON\.stringify/);
+});
+
+test('pages config writer serializes the API and bot URLs', async () => {
+  const { buildConfig } = await import('../scripts/write-pages-config.mjs');
+
+  assert.equal(
+    buildConfig('https://api.example.test', 'https://t.me/hypedashboard_bot'),
+    'window.HYPE_CONFIG = {"apiBaseUrl":"https://api.example.test","botUrl":"https://t.me/hypedashboard_bot"};\n',
+  );
+});
