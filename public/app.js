@@ -7,7 +7,7 @@ import {
   nextLiveVisibleRange,
   normalizedHistory,
   shouldFollowLiveRange,
-} from "./chart-data.js";
+} from "./chart-data.js?v=13";
 
 const POLL_INTERVAL_MS = 1_000;
 const DEFAULT_RANGE_HOURS = 1;
