@@ -39,6 +39,8 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /new EventSource\(apiPath\("\/api\/events"\)\)/);
   assert.match(app, /source\.onopen = \(\) =>/);
   assert.match(app, /fetch\(apiPath\("\/api\/snapshot"\)/);
+  assert.match(app, /fetch\(apiPath\("\/api\/state"\)/);
+  assert.match(app, /historyPointFromSnapshot/);
   assert.match(app, /source\.onerror = \(\) => \{/);
   assert.match(app, /startPolling\(\);/);
   assert.match(app, /stopPolling\(\);/);

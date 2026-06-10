@@ -25,3 +25,12 @@ test("historyPointEvent carries exactly one sampled point", () => {
     point,
   });
 });
+
+test("server exposes compact live state separately from full history snapshots", async () => {
+  const serverSource = await import("node:fs/promises").then(({ readFile }) =>
+    readFile(new URL("../src/server.js", import.meta.url), "utf8"),
+  );
+
+  assert.match(serverSource, /url\.pathname === "\/api\/state"/);
+  assert.match(serverSource, /sendJson\(res, compactState\(service\.getState\(\)\)\)/);
+});

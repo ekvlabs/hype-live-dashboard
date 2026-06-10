@@ -40,6 +40,11 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/state") {
+      sendJson(res, compactState(service.getState()));
+      return;
+    }
+
     if (url.pathname === "/api/events") {
       handleEvents(req, res);
       return;

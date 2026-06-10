@@ -312,7 +312,7 @@ function connectEvents() {
     startPolling();
   }, 4_000);
   source.onopen = () => {
-    stopPolling();
+    setStatus(lastState?.status ?? { ok: true, message: "live" });
   };
   source.addEventListener("snapshot", (event) => {
     markRealtimeEventReceived();
@@ -335,6 +335,20 @@ async function fetchSnapshot() {
   } catch (error) {
     setStatus({ ok: false, message: error.message });
     startPolling();
+  }
+}
+
+async function fetchLiveState() {
+  try {
+    const response = await fetch(apiPath("/api/state"), { cache: "no-store" });
+    const state = await response.json();
+    mergeState(state);
+    const point = historyPointFromSnapshot(state.snapshot);
+    if (point) {
+      appendHistoryPoint(point);
+    }
+  } catch (error) {
+    setStatus({ ok: false, message: error.message });
   }
 }
 
@@ -370,7 +384,8 @@ function startPolling() {
   if (pollTimer) {
     return;
   }
-  pollTimer = setInterval(fetchSnapshot, POLL_INTERVAL_MS);
+  pollTimer = setInterval(fetchLiveState, POLL_INTERVAL_MS);
+  fetchLiveState();
 }
 
 function stopPolling() {
@@ -475,6 +490,19 @@ function appendHistoryPoint(point) {
     followLive,
     visibleRange,
   });
+}
+
+function historyPointFromSnapshot(snapshot) {
+  if (!snapshot?.pressure) {
+    return null;
+  }
+
+  return {
+    t: Date.now(),
+    price: snapshot.price,
+    next1h: snapshot.pressure.next1h,
+    next24h: snapshot.pressure.next24h,
+  };
 }
 
 function setChartData(history) {
