@@ -32,5 +32,6 @@ test("server exposes compact live state separately from full history snapshots",
   );
 
   assert.match(serverSource, /url\.pathname === "\/api\/state"/);
+  assert.match(serverSource, /url\.pathname === "\/api\/visit"/);
   assert.match(serverSource, /sendJson\(res, compactState\(service\.getState\(\)\)\)/);
 });

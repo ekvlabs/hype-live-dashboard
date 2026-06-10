@@ -50,6 +50,11 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/visit") {
+      sendJson(res, { ok: true });
+      return;
+    }
+
     if (url.pathname === "/api/analytics") {
       sendJson(res, {
         ...analyticsStore.summary(),

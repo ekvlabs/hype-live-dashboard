@@ -111,7 +111,7 @@ export class AnalyticsStore {
 
 export function classifyRequestPath(pathname) {
   const path = normalizePath(pathname);
-  if (path === "/" || path === "/index.html") {
+  if (path === "/" || path === "/index.html" || path === "/api/visit") {
     return "page";
   }
   if (path === "/api/analytics") {

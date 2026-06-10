@@ -88,6 +88,7 @@ let isSyncingCrosshair = false;
 let ignoreRangeEventsUntil = 0;
 
 configureAlertBotLink();
+recordVisit();
 wireRangeControls();
 wireResolutionControls();
 wireResize();
@@ -380,6 +381,13 @@ function configureAlertBotLink() {
 
   elements.alertBotLink.href = botUrl;
   elements.alertBotLink.hidden = false;
+}
+
+function recordVisit() {
+  fetch(apiPath("/api/visit"), {
+    cache: "no-store",
+    keepalive: true,
+  }).catch(() => {});
 }
 
 function normalizeExternalUrl(value) {

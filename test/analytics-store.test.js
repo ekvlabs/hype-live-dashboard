@@ -6,6 +6,7 @@ import { AnalyticsStore, classifyRequestPath } from "../src/analytics-store.js";
 test("classifyRequestPath separates page views, API calls, assets, and analytics", () => {
   assert.equal(classifyRequestPath("/"), "page");
   assert.equal(classifyRequestPath("/index.html"), "page");
+  assert.equal(classifyRequestPath("/api/visit"), "page");
   assert.equal(classifyRequestPath("/api/state"), "api");
   assert.equal(classifyRequestPath("/api/analytics"), "analytics");
   assert.equal(classifyRequestPath("/app.js"), "asset");

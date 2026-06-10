@@ -36,11 +36,13 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /const LIVE_FETCH_TIMEOUT_MS = 8_000/);
   assert.match(app, /apiPath/);
   assert.match(app, /configureAlertBotLink/);
+  assert.match(app, /recordVisit/);
   assert.match(app, /botUrl/);
   assert.match(app, /AbortController/);
   assert.match(app, /liveFetchInFlight/);
   assert.match(app, /fetch\(apiPath\("\/api\/snapshot"\)/);
   assert.match(app, /fetch\(apiPath\("\/api\/state"\)/);
+  assert.match(app, /fetch\(apiPath\("\/api\/visit"\)/);
   assert.match(app, /historyPointFromSnapshot/);
   assert.match(app, /startPolling\(\);/);
   assert.match(app, /rightPriceScale/);
