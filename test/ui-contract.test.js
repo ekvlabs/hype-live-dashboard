@@ -15,6 +15,10 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(html, /data-resolution="1s"/);
   assert.match(html, /data-resolution="5s"/);
   assert.match(html, /data-resolution="1m"/);
+  assert.match(html, /src="\.\/config\.js/);
+  assert.match(html, /href="\.\/styles\.css/);
+  assert.match(html, /src="\.\/vendor\/lightweight-charts\.standalone\.production\.js/);
+  assert.match(html, /src="\.\/app\.js/);
   assert.match(html, /TWAP 1h/);
   assert.match(html, /TWAP 24h/);
   assert.match(html, /id="twap1hChart"/);
@@ -27,6 +31,9 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /key: "next1h"/);
   assert.match(app, /key: "next24h"/);
   assert.match(app, /const POLL_INTERVAL_MS = 1_000/);
+  assert.match(app, /apiPath/);
+  assert.match(app, /new EventSource\(apiPath\("\/api\/events"\)\)/);
+  assert.match(app, /fetch\(apiPath\("\/api\/snapshot"\)/);
   assert.match(app, /rightPriceScale/);
   assert.match(app, /leftPriceScale:\s*\{\s*visible:\s*false/s);
   assert.match(app, /syncVisibleRange/);
@@ -45,4 +52,5 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.doesNotMatch(app, /priceCandles/);
   assert.doesNotMatch(html, /<canvas|chart-scroll|chart-track/);
   assert.doesNotMatch(html, /overlayChart|Live Overlay/);
+  assert.doesNotMatch(html, /href="\/styles\.css|src="\/vendor|src="\/app\.js/);
 });

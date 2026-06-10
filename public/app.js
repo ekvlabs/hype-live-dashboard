@@ -4,11 +4,12 @@ import {
   historyToPriceBars,
   needsVerticalAutoscale,
   normalizedHistory,
-} from "/chart-data.js";
+} from "./chart-data.js";
 
 const POLL_INTERVAL_MS = 1_000;
 const DEFAULT_RANGE_HOURS = 1;
 const CHART_HEIGHT = 280;
+const API_BASE_URL = normalizeApiBaseUrl(window.HYPE_CONFIG?.apiBaseUrl ?? window.HYPE_API_BASE_URL ?? "");
 
 const {
   BarSeries,
@@ -284,7 +285,7 @@ function connectEvents() {
     return;
   }
 
-  const source = new EventSource("/api/events");
+  const source = new EventSource(apiPath("/api/events"));
   source.addEventListener("snapshot", (event) => {
     mergeState(JSON.parse(event.data));
   });
@@ -298,12 +299,20 @@ function connectEvents() {
 
 async function fetchSnapshot() {
   try {
-    const response = await fetch("/api/snapshot", { cache: "no-store" });
+    const response = await fetch(apiPath("/api/snapshot"), { cache: "no-store" });
     render(await response.json());
   } catch (error) {
     setStatus({ ok: false, message: error.message });
     startPolling();
   }
+}
+
+function apiPath(path) {
+  return `${API_BASE_URL}${path}`;
+}
+
+function normalizeApiBaseUrl(value) {
+  return String(value ?? "").replace(/\/+$/, "");
 }
 
 function startPolling() {

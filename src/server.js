@@ -5,6 +5,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LiveDataService } from "./data-source.js";
+import { apiCorsHeaders } from "./cors.js";
 import { compactState, sseFrame } from "./events.js";
 import { HistoryStore } from "./history-store.js";
 import { TelegramNotifier } from "./telegram-notifier.js";
@@ -25,6 +26,12 @@ const service = new LiveDataService({
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+
+    if (url.pathname.startsWith("/api/") && req.method === "OPTIONS") {
+      res.writeHead(204, apiCorsHeaders());
+      res.end();
+      return;
+    }
 
     if (url.pathname === "/api/snapshot") {
       sendJson(res, service.getState());
@@ -69,6 +76,7 @@ function handleEvents(req, res) {
     "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
+    ...apiCorsHeaders(),
   });
 
   const send = (event, payload) => {
@@ -125,6 +133,7 @@ function sendJson(res, payload, statusCode = 200) {
   res.writeHead(statusCode, {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
+    ...apiCorsHeaders(),
   });
   res.end(JSON.stringify(payload));
 }
