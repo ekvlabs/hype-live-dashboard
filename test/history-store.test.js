@@ -1,0 +1,29 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import test from "node:test";
+
+import { HistoryStore } from "../src/history-store.js";
+
+test("HistoryStore persists points and loads only the rolling window", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hype-history-"));
+  try {
+    const filePath = join(dir, "history.ndjson");
+    const store = new HistoryStore(filePath);
+
+    store.append({ t: 0, price: 50, next1h: 1, next24h: 2 });
+    store.append({ t: 3_600_000, price: 51, next1h: 3, next24h: 4 });
+    store.append({ t: 7_200_000, price: 52, next1h: 5, next24h: 6 });
+
+    const loaded = store.load({ now: 7_200_000, maxHistoryHours: 1 });
+
+    assert.deepEqual(loaded, [
+      { t: 3_600_000, price: 51, next1h: 3, next24h: 4 },
+      { t: 7_200_000, price: 52, next1h: 5, next24h: 6 },
+    ]);
+    assert.equal((await readFile(filePath, "utf8")).trim().split("\n").length, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

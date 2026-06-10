@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.log
+*.tar.gz
+*.zip
+
+data/*.ndjson
+data/*.backup.ndjson
+!data/.gitkeep

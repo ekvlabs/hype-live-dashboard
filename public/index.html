@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HYPE Live Dashboard</title>
+    <link rel="stylesheet" href="/styles.css?v=6">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">HypurrScan / Hyperliquid</p>
+          <h1>HYPE Live</h1>
+        </div>
+        <div class="status" id="status">
+          <span class="status-dot"></span>
+          <span id="statusText">starting</span>
+        </div>
+      </header>
+
+      <section class="metrics" aria-label="Current metrics">
+        <article class="metric-card pressure-card">
+          <h2>TWAP HYPE Sum Pressure</h2>
+          <div class="pressure-row">
+            <span>TWAP 1h:</span>
+            <strong id="twap1h">--</strong>
+          </div>
+          <div class="pressure-row">
+            <span>TWAP 24h:</span>
+            <strong id="twap24h">--</strong>
+          </div>
+        </article>
+
+        <article class="metric-card price-card">
+          <h2>HYPE Price</h2>
+          <strong id="hypePrice">--</strong>
+          <span id="priceSource">--</span>
+        </article>
+
+        <article class="metric-card flow-card">
+          <h2>TWAP Scope</h2>
+          <div class="flow-grid">
+            <div>
+              <span>ACTIVE</span>
+              <strong id="activeTwaps">0</strong>
+            </div>
+            <div>
+              <span>MARKETS</span>
+              <strong id="marketCount">0</strong>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="charts" aria-label="Live charts">
+        <div class="range-bar" aria-label="Chart controls">
+          <span id="rangeInfo">Range: 1h</span>
+          <div class="control-groups">
+            <div class="range-buttons" aria-label="Display resolution">
+              <button type="button" class="range-btn active" data-resolution="1s">1s</button>
+              <button type="button" class="range-btn" data-resolution="5s">5s</button>
+              <button type="button" class="range-btn" data-resolution="15s">15s</button>
+              <button type="button" class="range-btn" data-resolution="1m">1m</button>
+              <button type="button" class="range-btn" data-resolution="5m">5m</button>
+            </div>
+            <div class="range-buttons" aria-label="History range">
+              <button type="button" class="range-btn active" data-range="1">1h</button>
+              <button type="button" class="range-btn" data-range="3">3h</button>
+              <button type="button" class="range-btn" data-range="6">6h</button>
+              <button type="button" class="range-btn" data-range="12">12h</button>
+              <button type="button" class="range-btn" data-range="24">24h</button>
+              <button type="button" class="range-btn" data-range="72">3d</button>
+              <button type="button" class="range-btn" data-range="168">7d</button>
+            </div>
+          </div>
+        </div>
+
+        <article class="chart-panel">
+          <div class="chart-head">
+            <h2>TWAP 1h</h2>
+            <strong id="chartTwap1hValue">--</strong>
+          </div>
+          <div class="tv-chart" id="twap1hChart"></div>
+        </article>
+
+        <article class="chart-panel">
+          <div class="chart-head">
+            <h2>TWAP 24h</h2>
+            <strong id="chartTwap24hValue">--</strong>
+          </div>
+          <div class="tv-chart" id="twap24hChart"></div>
+        </article>
+
+        <article class="chart-panel">
+          <div class="chart-head">
+            <h2 id="priceChartTitle">HYPE 1s price</h2>
+            <strong id="chartPriceValue">--</strong>
+          </div>
+          <div class="tv-chart" id="priceChart"></div>
+        </article>
+      </section>
+
+      <footer class="foot">
+        <span id="updatedAt">Last update: --</span>
+        <span id="marketList">Markets: --</span>
+      </footer>
+    </main>
+
+    <script src="/vendor/lightweight-charts.standalone.production.js"></script>
+    <script type="module" src="/app.js?v=9"></script>
+  </body>
+</html>
