@@ -58,6 +58,24 @@ export class BotStore {
     return this.db.prepare("SELECT * FROM telegram_users WHERE enabled = 1 ORDER BY chat_id").all().map(mapUser);
   }
 
+  stats() {
+    const row = this.db
+      .prepare(`
+        SELECT
+          COUNT(*) AS total_users,
+          SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS enabled_users
+        FROM telegram_users
+      `)
+      .get();
+    const totalUsers = Number(row?.total_users) || 0;
+    const enabledUsers = Number(row?.enabled_users) || 0;
+    return {
+      totalUsers,
+      enabledUsers,
+      disabledUsers: totalUsers - enabledUsers,
+    };
+  }
+
   setThreshold(chatId, threshold, now = Date.now()) {
     this.db
       .prepare("UPDATE telegram_users SET threshold = ?, updated_at = ? WHERE chat_id = ?")

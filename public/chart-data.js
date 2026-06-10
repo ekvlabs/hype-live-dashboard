@@ -120,6 +120,10 @@ export function shouldFollowLiveRange(visibleRange, previousLastTime, toleranceS
   return visibleTo >= liveEdge - Math.max(0, Number(toleranceSeconds) || 0);
 }
 
+export function shouldKeepLiveFollowing(isLiveFollowing, visibleRange, previousLastTime) {
+  return Boolean(isLiveFollowing) && shouldFollowLiveRange(visibleRange, previousLastTime);
+}
+
 export function nextLiveVisibleRange(visibleRange, selectedHours, nextLastTime) {
   const to = Number(nextLastTime);
   if (!Number.isFinite(to)) {
@@ -135,6 +139,75 @@ export function nextLiveVisibleRange(visibleRange, selectedHours, nextLastTime) 
   }
 
   return { from: to - currentSpan, to };
+}
+
+export function selectedHistoryWindow(history, selectedHours, anchorTime = null) {
+  if (!history?.length) {
+    return [];
+  }
+
+  const anchor = Number(anchorTime ?? history.at(-1)?.time);
+  if (!Number.isFinite(anchor)) {
+    return [];
+  }
+
+  const span = Math.max(1, Number(selectedHours) || 1) * 60 * 60;
+  const from = anchor - span;
+  return history.filter((point) => Number(point.time) >= from && Number(point.time) <= anchor);
+}
+
+export function upsertLineDataPoint(data, historyPoint, key, resolutionSeconds, positiveColor) {
+  const time = bucketTimeForPoint(historyPoint, resolutionSeconds);
+  const value = Number(historyPoint?.[key]);
+  if (!Number.isFinite(time) || !Number.isFinite(value)) {
+    return data ?? [];
+  }
+
+  return upsertSeriesPoint(data, {
+    time,
+    value,
+    color: value < 0 ? NEGATIVE_TWAP_COLOR : positiveColor,
+  });
+}
+
+export function upsertPriceBarData(data, historyPoint, resolutionSeconds) {
+  const time = bucketTimeForPoint(historyPoint, resolutionSeconds);
+  const price = Number(historyPoint?.price);
+  if (!Number.isFinite(time) || !Number.isFinite(price)) {
+    return data ?? [];
+  }
+
+  const current = data ?? [];
+  const next = current.slice();
+  const existingIndex = next.findIndex((point) => Number(point.time) === time);
+  if (existingIndex >= 0) {
+    const bar = next[existingIndex];
+    next[existingIndex] = {
+      ...bar,
+      high: Math.max(Number(bar.high), price),
+      low: Math.min(Number(bar.low), price),
+      close: price,
+    };
+    return next;
+  }
+
+  const previous = [...next].reverse().find((point) => Number(point.time) < time);
+  const open = Number(previous?.close);
+  return upsertSeriesPoint(next, {
+    time,
+    open: Number.isFinite(open) ? open : price,
+    high: Number.isFinite(open) ? Math.max(open, price) : price,
+    low: Number.isFinite(open) ? Math.min(open, price) : price,
+    close: price,
+  });
+}
+
+export function pruneSeriesData(data, oldestTime) {
+  const cutoff = Number(oldestTime);
+  if (!Number.isFinite(cutoff)) {
+    return data ?? [];
+  }
+  return (data ?? []).filter((point) => Number(point.time) >= cutoff);
 }
 
 export function minimumBarSpacingForRange(containerWidth, selectedHours, resolutionSeconds) {
@@ -168,6 +241,25 @@ function bucketHistory(history, resolutionSeconds) {
   }
 
   return [...buckets.values()].sort((a, b) => a.time - b.time);
+}
+
+function bucketTimeForPoint(point, resolutionSeconds) {
+  const time = Number(point?.time);
+  const seconds = Math.max(1, Number(resolutionSeconds) || 1);
+  return Number.isFinite(time) ? Math.floor(time / seconds) * seconds : NaN;
+}
+
+function upsertSeriesPoint(data, point) {
+  const next = (data ?? []).slice();
+  const existingIndex = next.findIndex((item) => Number(item.time) === Number(point.time));
+  if (existingIndex >= 0) {
+    next[existingIndex] = point;
+    return next;
+  }
+
+  next.push(point);
+  next.sort((a, b) => Number(a.time) - Number(b.time));
+  return next;
 }
 
 function toUnixSeconds(timestamp) {

@@ -6,10 +6,15 @@ import {
   needsVerticalAutoscale,
   nextLiveVisibleRange,
   normalizedHistory,
-  shouldFollowLiveRange,
-} from "./chart-data.js?v=13";
+  pruneSeriesData,
+  selectedHistoryWindow,
+  shouldKeepLiveFollowing,
+  upsertLineDataPoint,
+  upsertPriceBarData,
+} from "./chart-data.js?v=15";
 
 const POLL_INTERVAL_MS = 1_000;
+const LIVE_FETCH_TIMEOUT_MS = 8_000;
 const DEFAULT_RANGE_HOURS = 1;
 const CHART_HEIGHT = 280;
 const API_BASE_URL = normalizeApiBaseUrl(window.HYPE_CONFIG?.apiBaseUrl ?? window.HYPE_API_BASE_URL ?? "");
@@ -75,10 +80,12 @@ let selectedHours = DEFAULT_RANGE_HOURS;
 let selectedResolution = RESOLUTIONS[0];
 let lastState = null;
 let pollTimer = null;
-let sseFallbackTimer = null;
+let liveFetchInFlight = false;
 let hasAppliedInitialRange = false;
+let isLiveFollowing = true;
 let isSyncingRange = false;
 let isSyncingCrosshair = false;
+let ignoreRangeEventsUntil = 0;
 
 configureAlertBotLink();
 wireRangeControls();
@@ -167,8 +174,8 @@ function chartOptions(container) {
       rightOffset: 4,
       barSpacing: 8,
       minBarSpacing: 0.02,
-      rightBarStaysOnScroll: true,
-      shiftVisibleRangeOnNewBar: true,
+      rightBarStaysOnScroll: false,
+      shiftVisibleRangeOnNewBar: false,
     },
     localization: {
       locale: "ru-RU",
@@ -195,6 +202,7 @@ function wireRangeControls() {
       for (const item of elements.rangeButtons.filter((item) => item.dataset.range)) {
         item.classList.toggle("active", item === button);
       }
+      isLiveFollowing = true;
       applyTimeScaleDensity();
       render(lastState, { forceRange: true });
     });
@@ -209,6 +217,7 @@ function wireResolutionControls() {
       for (const item of elements.resolutionButtons) {
         item.classList.toggle("active", item === button);
       }
+      isLiveFollowing = true;
       applyTimeScaleDensity();
       render(lastState, { forceRange: true });
     });
@@ -260,6 +269,10 @@ function syncVisibleRange(sourceEntry, range) {
     return;
   }
 
+  if (hasAppliedInitialRange && !isProgrammaticRangeEvent()) {
+    isLiveFollowing = false;
+  }
+
   isSyncingRange = true;
   for (const entry of chartEntries) {
     if (entry !== sourceEntry) {
@@ -302,30 +315,7 @@ function syncCrosshair(sourceEntry, param) {
 }
 
 function connectEvents() {
-  if (!("EventSource" in window)) {
-    startPolling();
-    return;
-  }
-
-  const source = new EventSource(apiPath("/api/events"));
-  sseFallbackTimer = setTimeout(() => {
-    startPolling();
-  }, 4_000);
-  source.onopen = () => {
-    setStatus(lastState?.status ?? { ok: true, message: "live" });
-  };
-  source.addEventListener("snapshot", (event) => {
-    markRealtimeEventReceived();
-    mergeState(JSON.parse(event.data));
-  });
-  source.addEventListener("history-point", (event) => {
-    markRealtimeEventReceived();
-    appendHistoryPoint(JSON.parse(event.data).point);
-  });
-  source.onerror = () => {
-    setStatus({ ok: false, message: "reconnecting" });
-    startPolling();
-  };
+  startPolling();
 }
 
 async function fetchSnapshot() {
@@ -339,16 +329,36 @@ async function fetchSnapshot() {
 }
 
 async function fetchLiveState() {
+  if (liveFetchInFlight) {
+    return;
+  }
+
+  liveFetchInFlight = true;
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => {
+    abortController.abort();
+  }, LIVE_FETCH_TIMEOUT_MS);
+
   try {
-    const response = await fetch(apiPath("/api/state"), { cache: "no-store" });
+    const response = await fetch(apiPath("/api/state"), {
+      cache: "no-store",
+      signal: abortController.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`state ${response.status}`);
+    }
     const state = await response.json();
-    mergeState(state);
     const point = historyPointFromSnapshot(state.snapshot);
     if (point) {
-      appendHistoryPoint(point);
+      appendHistoryPoint(point, state);
+    } else {
+      mergeState(state);
     }
   } catch (error) {
-    setStatus({ ok: false, message: error.message });
+    setStatus({ ok: false, message: error.name === "AbortError" ? "state timeout" : error.message });
+  } finally {
+    clearTimeout(timeout);
+    liveFetchInFlight = false;
   }
 }
 
@@ -386,22 +396,6 @@ function startPolling() {
   }
   pollTimer = setInterval(fetchLiveState, POLL_INTERVAL_MS);
   fetchLiveState();
-}
-
-function stopPolling() {
-  if (!pollTimer) {
-    return;
-  }
-  clearInterval(pollTimer);
-  pollTimer = null;
-}
-
-function markRealtimeEventReceived() {
-  if (sseFallbackTimer) {
-    clearTimeout(sseFallbackTimer);
-    sseFallbackTimer = null;
-  }
-  stopPolling();
 }
 
 function render(state, options = {}) {
@@ -448,7 +442,12 @@ function render(state, options = {}) {
   setSignedClass(elements.chartTwap1hValue, snapshot.pressure.next1h);
   setSignedClass(elements.chartTwap24hValue, snapshot.pressure.next24h);
 
-  setChartData(history);
+  if (options.incrementalPoint && hasAppliedInitialRange && !options.forceRange) {
+    appendChartData(options.incrementalPoint);
+  } else {
+    setChartData(history);
+  }
+
   if (options.forceRange || !hasAppliedInitialRange) {
     applyVisibleTimeWindow(history);
     hasAppliedInitialRange = true;
@@ -465,7 +464,7 @@ function mergeState(update) {
   });
 }
 
-function appendHistoryPoint(point) {
+function appendHistoryPoint(point, statePatch = {}) {
   if (!point) {
     return;
   }
@@ -474,7 +473,7 @@ function appendHistoryPoint(point) {
   const previousHistory = normalizedHistory(previous.history ?? []);
   const previousLastTime = previousHistory.at(-1)?.time;
   const visibleRange = chartEntries[0]?.chart.timeScale().getVisibleRange() ?? null;
-  const followLive = shouldFollowLiveRange(visibleRange, previousLastTime);
+  const followLive = shouldKeepLiveFollowing(isLiveFollowing, visibleRange, previousLastTime);
   const config = previous.config ?? {};
   const maxHistoryHours = Number(config.maxHistoryHours) || 168;
   const historyLimit = Number(config.historyLimit) || 604_800;
@@ -482,13 +481,16 @@ function appendHistoryPoint(point) {
   const history = [...(previous.history ?? []), point]
     .filter((item) => Number(item.t) >= cutoff)
     .slice(-historyLimit);
+  const incrementalPoint = normalizedHistory([point]).at(-1) ?? null;
 
   render({
     ...previous,
+    ...statePatch,
     history,
   }, {
     followLive,
     visibleRange,
+    incrementalPoint,
   });
 }
 
@@ -506,14 +508,37 @@ function historyPointFromSnapshot(snapshot) {
 }
 
 function setChartData(history) {
+  const chartHistory = selectedHistoryWindow(history, selectedHours);
   for (const entry of chartEntries) {
     const data =
       entry.type === "bar"
-        ? historyToPriceBars(history, selectedResolution.seconds)
-        : historyToLineData(history, entry.key, selectedResolution.seconds, entry.color);
+        ? historyToPriceBars(chartHistory, selectedResolution.seconds)
+        : historyToLineData(chartHistory, entry.key, selectedResolution.seconds, entry.color);
     entry.data = data;
     entry.dataByTime = new Map(data.map((point) => [point.time, point]));
     entry.series.setData(data);
+    autoScaleVertical(entry);
+  }
+}
+
+function appendChartData(point) {
+  const oldestTime = Number(point.time) - selectedHours * 60 * 60;
+  const bucketTime = Math.floor(Number(point.time) / selectedResolution.seconds) * selectedResolution.seconds;
+
+  for (const entry of chartEntries) {
+    const nextData =
+      entry.type === "bar"
+        ? upsertPriceBarData(entry.data, point, selectedResolution.seconds)
+        : upsertLineDataPoint(entry.data, point, entry.key, selectedResolution.seconds, entry.color);
+    const prunedData = pruneSeriesData(nextData, oldestTime);
+    const updatedPoint = nextData.find((item) => Number(item.time) === bucketTime);
+    entry.data = prunedData;
+    entry.dataByTime = new Map(prunedData.map((item) => [item.time, item]));
+    if (prunedData.length < nextData.length || !updatedPoint) {
+      entry.series.setData(prunedData);
+    } else {
+      entry.series.update(updatedPoint);
+    }
     autoScaleVertical(entry);
   }
 }
@@ -526,9 +551,11 @@ function applyVisibleTimeWindow(history) {
 
   const firstTime = history[0]?.time ?? lastTime;
   const from = Math.max(firstTime, lastTime - selectedHours * 60 * 60);
-  for (const entry of chartEntries) {
-    entry.chart.timeScale().setVisibleRange({ from, to: lastTime });
-  }
+  withProgrammaticRangeUpdate(() => {
+    for (const entry of chartEntries) {
+      entry.chart.timeScale().setVisibleRange({ from, to: lastTime });
+    }
+  });
   autoScaleAllVertical();
 }
 
@@ -539,10 +566,21 @@ function applyLiveVisibleWindow(history, previousVisibleRange) {
     return;
   }
 
-  for (const entry of chartEntries) {
-    entry.chart.timeScale().setVisibleRange(range);
-  }
+  withProgrammaticRangeUpdate(() => {
+    for (const entry of chartEntries) {
+      entry.chart.timeScale().setVisibleRange(range);
+    }
+  });
   autoScaleAllVertical();
+}
+
+function withProgrammaticRangeUpdate(callback) {
+  ignoreRangeEventsUntil = Date.now() + 250;
+  callback();
+}
+
+function isProgrammaticRangeEvent() {
+  return Date.now() <= ignoreRangeEventsUntil;
 }
 
 function autoScaleAllVertical() {

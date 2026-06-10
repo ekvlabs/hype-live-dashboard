@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { AnalyticsStore, clientIp } from "./analytics-store.js";
 import { LiveDataService } from "./data-source.js";
 import { apiCorsHeaders } from "./cors.js";
 import { compactState, sseFrame } from "./events.js";
@@ -17,8 +18,10 @@ const vendorDir = join(rootDir, "node_modules", "lightweight-charts", "dist");
 const port = Number(process.env.PORT ?? 4173);
 const host = process.env.HOST ?? "127.0.0.1";
 const historyFile = process.env.HISTORY_FILE ?? join(rootDir, "data", "history.ndjson");
+const analyticsFile = process.env.ANALYTICS_DB ?? join(rootDir, "data", "analytics.sqlite");
 
 const telegramBot = TelegramAlertBot.fromEnv(process.env);
+const analyticsStore = new AnalyticsStore(analyticsFile);
 
 const service = new LiveDataService({
   historyStore: new HistoryStore(historyFile),
@@ -26,8 +29,10 @@ const service = new LiveDataService({
 });
 
 const server = createServer(async (req, res) => {
+  const startedAt = Date.now();
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    trackRequest(req, res, url, startedAt);
 
     if (url.pathname.startsWith("/api/") && req.method === "OPTIONS") {
       res.writeHead(204, apiCorsHeaders());
@@ -42,6 +47,14 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname === "/api/state") {
       sendJson(res, compactState(service.getState()));
+      return;
+    }
+
+    if (url.pathname === "/api/analytics") {
+      sendJson(res, {
+        ...analyticsStore.summary(),
+        bot: telegramBot.stats(),
+      });
       return;
     }
 
@@ -79,6 +92,24 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 let isShuttingDown = false;
+
+function trackRequest(req, res, url, startedAt) {
+  res.on("finish", () => {
+    try {
+      analyticsStore.recordRequest({
+        at: startedAt,
+        method: req.method,
+        path: url.pathname,
+        statusCode: res.statusCode,
+        durationMs: Date.now() - startedAt,
+        ip: clientIp(req),
+        userAgent: req.headers["user-agent"] ?? "",
+      });
+    } catch (error) {
+      console.error("Analytics write failed:", error.message);
+    }
+  });
+}
 
 function handleEvents(req, res) {
   res.writeHead(200, {

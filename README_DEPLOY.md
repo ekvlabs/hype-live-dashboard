@@ -65,7 +65,21 @@ Override it with:
 HISTORY_FILE=/path/to/history.ndjson npm start
 ```
 
-The browser loads full history once from `/api/snapshot`. After that `/api/events` streams only compact live updates and one new history point per second.
+The browser loads the stored history once from `/api/snapshot`. After that it polls compact live state from `/api/state` once per second and appends one chart point per tick.
+
+Request analytics are stored in SQLite:
+
+```text
+data/analytics.sqlite
+```
+
+Override it with:
+
+```bash
+ANALYTICS_DB=/path/to/analytics.sqlite npm start
+```
+
+Aggregates are available at `/api/analytics`.
 
 ## Telegram Alerts
 

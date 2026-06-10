@@ -37,3 +37,17 @@ test("BotStore stores Telegram users and alert settings in SQLite", () => {
   assert.equal(store.getUser(123).enabled, false);
   assert.deepEqual(store.listEnabledUsers(), []);
 });
+
+test("BotStore reports aggregate user counts", () => {
+  const store = new BotStore(":memory:");
+
+  store.upsertUser({ chatId: 1, now: 1_000 });
+  store.upsertUser({ chatId: 2, now: 1_000 });
+  store.disableUser(2, 2_000);
+
+  assert.deepEqual(store.stats(), {
+    totalUsers: 2,
+    enabledUsers: 1,
+    disabledUsers: 1,
+  });
+});

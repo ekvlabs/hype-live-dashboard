@@ -9,7 +9,12 @@ import {
   needsVerticalAutoscale,
   nextLiveVisibleRange,
   normalizedHistory,
+  pruneSeriesData,
+  selectedHistoryWindow,
   shouldFollowLiveRange,
+  shouldKeepLiveFollowing,
+  upsertLineDataPoint,
+  upsertPriceBarData,
   visibleDataRange,
 } from "../public/chart-data.js";
 
@@ -81,6 +86,11 @@ test("shouldFollowLiveRange tracks whether the chart is already at the live edge
   assert.equal(shouldFollowLiveRange({ from: 100, to: 155 }, 160), false);
 });
 
+test("shouldKeepLiveFollowing stops auto-scroll after the user leaves live mode", () => {
+  assert.equal(shouldKeepLiveFollowing(true, { from: 100, to: 160 }, 160), true);
+  assert.equal(shouldKeepLiveFollowing(false, { from: 100, to: 160 }, 160), false);
+});
+
 test("nextLiveVisibleRange advances the live window without changing current zoom", () => {
   assert.deepEqual(nextLiveVisibleRange({ from: 100, to: 160 }, 1, 161), { from: 101, to: 161 });
   assert.deepEqual(nextLiveVisibleRange(null, 1, 7_200), { from: 3_600, to: 7_200 });
@@ -91,4 +101,53 @@ test("minimumBarSpacingForRange allows 12h of 15s bars on mobile", () => {
   assert.equal(minimumBarSpacingForRange(390, 12, 15) <= 0.13, true);
   assert.equal(minimumBarSpacingForRange(390, 24, 15) <= 0.07, true);
   assert.equal(minimumBarSpacingForRange(1200, 1, 1) <= 0.31, true);
+});
+
+test("selectedHistoryWindow limits rendered points to the selected chart range", () => {
+  const history = [
+    { time: 1, price: 1 },
+    { time: 3_600, price: 2 },
+    { time: 7_200, price: 3 },
+    { time: 10_800, price: 4 },
+  ];
+
+  assert.deepEqual(selectedHistoryWindow(history, 1), [
+    { time: 7_200, price: 3 },
+    { time: 10_800, price: 4 },
+  ]);
+  assert.deepEqual(selectedHistoryWindow(history, 2, 7_200), [
+    { time: 1, price: 1 },
+    { time: 3_600, price: 2 },
+    { time: 7_200, price: 3 },
+  ]);
+});
+
+test("incremental line and price updates match full bucket aggregation", () => {
+  const history = [
+    { time: 10, price: 100, next1h: 100 },
+    { time: 11, price: 102, next1h: -25 },
+    { time: 15, price: 99, next1h: 50 },
+  ];
+
+  const line = history.reduce(
+    (data, point) => upsertLineDataPoint(data, point, "next1h", 5, "#10b437"),
+    [],
+  );
+  const bars = history.reduce((data, point) => upsertPriceBarData(data, point, 5), []);
+
+  assert.deepEqual(line, historyToLineData(history, "next1h", 5, "#10b437"));
+  assert.deepEqual(bars, historyToPriceBars(history, 5));
+});
+
+test("pruneSeriesData drops points older than the visible data window", () => {
+  assert.deepEqual(
+    pruneSeriesData(
+      [
+        { time: 10, value: 1 },
+        { time: 15, value: 2 },
+      ],
+      12,
+    ),
+    [{ time: 15, value: 2 }],
+  );
 });

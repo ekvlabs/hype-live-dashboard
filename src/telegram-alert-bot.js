@@ -43,6 +43,17 @@ export class TelegramAlertBot {
     return Boolean(this.botToken && this.store);
   }
 
+  stats() {
+    if (!this.store) {
+      return {
+        totalUsers: 0,
+        enabledUsers: 0,
+        disabledUsers: 0,
+      };
+    }
+    return this.store.stats();
+  }
+
   start() {
     if (!this.enabled || this.pollTimer) {
       return;
