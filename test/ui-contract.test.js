@@ -33,7 +33,7 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /key: "next1h"/);
   assert.match(app, /key: "next24h"/);
   assert.match(app, /const POLL_INTERVAL_MS = 1_000/);
-  assert.match(app, /const LIVE_FETCH_TIMEOUT_MS = 8_000/);
+  assert.match(app, /const LIVE_FETCH_TIMEOUT_MS = 3_000/);
   assert.match(app, /apiPath/);
   assert.match(app, /configureAlertBotLink/);
   assert.match(app, /recordVisit/);

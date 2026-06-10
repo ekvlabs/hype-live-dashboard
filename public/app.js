@@ -14,7 +14,7 @@ import {
 } from "./chart-data.js?v=15";
 
 const POLL_INTERVAL_MS = 1_000;
-const LIVE_FETCH_TIMEOUT_MS = 8_000;
+const LIVE_FETCH_TIMEOUT_MS = 3_000;
 const DEFAULT_RANGE_HOURS = 1;
 const CHART_HEIGHT = 280;
 const API_BASE_URL = normalizeApiBaseUrl(window.HYPE_CONFIG?.apiBaseUrl ?? window.HYPE_API_BASE_URL ?? "");
