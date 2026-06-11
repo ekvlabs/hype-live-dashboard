@@ -49,6 +49,11 @@ export function historyToLineData(history, key, resolutionSeconds, positiveColor
     .filter((point) => Number.isFinite(point.value));
 }
 
+export function historyToAlignedLineData(history, key, resolutionSeconds, positiveColor) {
+  const buckets = bucketHistory(history, resolutionSeconds);
+  return buckets.map((bucket) => alignedLinePoint(bucket, key, positiveColor));
+}
+
 export function historyToPriceBars(history, resolutionSeconds) {
   const buckets = bucketHistory(history, resolutionSeconds);
   const bars = [];
@@ -177,6 +182,31 @@ export function upsertLineDataPoint(data, historyPoint, key, resolutionSeconds, 
   });
 }
 
+export function upsertAlignedLineDataPoint(data, historyPoint, key, resolutionSeconds, positiveColor) {
+  const time = bucketTimeForPoint(historyPoint, resolutionSeconds);
+  if (!Number.isFinite(time)) {
+    return data ?? [];
+  }
+
+  const current = data ?? [];
+  const existing = current.find((point) => Number(point.time) === time);
+  const value = Number(historyPoint?.[key]);
+  if (!Number.isFinite(value) && existing && "value" in existing) {
+    return current;
+  }
+
+  return upsertSeriesPoint(
+    current,
+    Number.isFinite(value)
+      ? {
+          time,
+          value,
+          color: value < 0 ? NEGATIVE_TWAP_COLOR : positiveColor,
+        }
+      : { time },
+  );
+}
+
 export function upsertPriceBarData(data, historyPoint, resolutionSeconds) {
   const time = bucketTimeForPoint(historyPoint, resolutionSeconds);
   const price = Number(historyPoint?.price);
@@ -254,6 +284,21 @@ function bucketTimeForPoint(point, resolutionSeconds) {
   const time = Number(point?.time);
   const seconds = Math.max(1, Number(resolutionSeconds) || 1);
   return Number.isFinite(time) ? Math.floor(time / seconds) * seconds : NaN;
+}
+
+function alignedLinePoint(bucket, key, positiveColor) {
+  for (let index = bucket.points.length - 1; index >= 0; index -= 1) {
+    const value = Number(bucket.points[index]?.[key]);
+    if (Number.isFinite(value)) {
+      return {
+        time: bucket.time,
+        value,
+        color: value < 0 ? NEGATIVE_TWAP_COLOR : positiveColor,
+      };
+    }
+  }
+
+  return { time: bucket.time };
 }
 
 function upsertSeriesPoint(data, point) {

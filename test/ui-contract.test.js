@@ -63,13 +63,15 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /rightBarStaysOnScroll:\s*false/);
   assert.match(app, /shiftVisibleRangeOnNewBar:\s*false/);
   assert.match(app, /syncVisibleRange/);
+  assert.match(app, /subscribeVisibleTimeRangeChange/);
+  assert.match(app, /setVisibleRange\(range\)/);
   assert.match(app, /createPriceLine/);
   assert.match(app, /selectedResolution/);
   assert.match(app, /historyToPriceBars/);
-  assert.match(app, /historyToLineData/);
+  assert.match(app, /historyToAlignedLineData/);
   assert.match(app, /selectedHistoryWindow/);
   assert.match(app, /shouldKeepLiveFollowing/);
-  assert.match(app, /upsertLineDataPoint/);
+  assert.match(app, /upsertAlignedLineDataPoint/);
   assert.match(app, /upsertPriceBarData/);
   assert.match(app, /pruneSeriesData/);
   assert.match(app, /isLiveFollowing = false/);
@@ -78,6 +80,8 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /appendHistoryPoint/);
   assert.match(app, /604_800/);
   assert.doesNotMatch(app, /new EventSource/);
+  assert.doesNotMatch(app, /subscribeVisibleLogicalRangeChange/);
+  assert.doesNotMatch(app, /setVisibleLogicalRange/);
   assert.doesNotMatch(app, /zeroSeries/);
   assert.doesNotMatch(html, /Buy total|Sell total|>BUY<|>SELL<|buyCount|sellCount/);
   assert.doesNotMatch(app, /twapBuy|twapSell|buyCount|sellCount|TWAP buy total|TWAP sell total/);

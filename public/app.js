@@ -1,6 +1,6 @@
 import {
   RESOLUTIONS,
-  historyToLineData,
+  historyToAlignedLineData,
   historyToPriceBars,
   minimumBarSpacingForRange,
   needsVerticalAutoscale,
@@ -9,9 +9,9 @@ import {
   pruneSeriesData,
   selectedHistoryWindow,
   shouldKeepLiveFollowing,
-  upsertLineDataPoint,
+  upsertAlignedLineDataPoint,
   upsertPriceBarData,
-} from "./chart-data.js?v=16";
+} from "./chart-data.js?v=17";
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;
@@ -322,7 +322,7 @@ function applyTimeScaleDensity() {
 
 function wireChartSync() {
   for (const entry of chartEntries) {
-    entry.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+    entry.chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
       syncVisibleRange(entry, range);
     });
 
@@ -344,7 +344,7 @@ function syncVisibleRange(sourceEntry, range) {
   isSyncingRange = true;
   for (const entry of chartEntries) {
     if (entry !== sourceEntry) {
-      entry.chart.timeScale().setVisibleLogicalRange(range);
+      entry.chart.timeScale().setVisibleRange(range);
     }
   }
   isSyncingRange = false;
@@ -599,12 +599,12 @@ function setChartData(history) {
     const data =
       entry.type === "bar"
         ? historyToPriceBars(chartHistory, selectedResolution.seconds)
-        : historyToLineData(chartHistory, entry.key, selectedResolution.seconds, entry.color);
+        : historyToAlignedLineData(chartHistory, entry.key, selectedResolution.seconds, entry.color);
     entry.data = data;
     entry.dataByTime = new Map(data.map((point) => [point.time, point]));
     entry.series.setData(data);
     for (const extra of entry.extraSeries ?? []) {
-      const extraData = historyToLineData(chartHistory, extra.key, selectedResolution.seconds, extra.color);
+      const extraData = historyToAlignedLineData(chartHistory, extra.key, selectedResolution.seconds, extra.color);
       extra.data = extraData;
       extra.dataByTime = new Map(extraData.map((point) => [point.time, point]));
       extra.series.setData(extraData);
@@ -621,7 +621,7 @@ function appendChartData(point) {
     const nextData =
       entry.type === "bar"
         ? upsertPriceBarData(entry.data, point, selectedResolution.seconds)
-        : upsertLineDataPoint(entry.data, point, entry.key, selectedResolution.seconds, entry.color);
+        : upsertAlignedLineDataPoint(entry.data, point, entry.key, selectedResolution.seconds, entry.color);
     const prunedData = pruneSeriesData(nextData, oldestTime);
     const updatedPoint = nextData.find((item) => Number(item.time) === bucketTime);
     entry.data = prunedData;
@@ -632,7 +632,13 @@ function appendChartData(point) {
       entry.series.update(updatedPoint);
     }
     for (const extra of entry.extraSeries ?? []) {
-      const nextExtraData = upsertLineDataPoint(extra.data, point, extra.key, selectedResolution.seconds, extra.color);
+      const nextExtraData = upsertAlignedLineDataPoint(
+        extra.data,
+        point,
+        extra.key,
+        selectedResolution.seconds,
+        extra.color,
+      );
       const prunedExtraData = pruneSeriesData(nextExtraData, oldestTime);
       const updatedExtraPoint = nextExtraData.find((item) => Number(item.time) === bucketTime);
       extra.data = prunedExtraData;

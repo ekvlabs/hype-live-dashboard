@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   NEGATIVE_TWAP_COLOR,
+  historyToAlignedLineData,
   historyToLineData,
   historyToPriceBars,
   minimumBarSpacingForRange,
@@ -14,6 +15,7 @@ import {
   shouldFollowLiveRange,
   shouldKeepLiveFollowing,
   upsertLineDataPoint,
+  upsertAlignedLineDataPoint,
   upsertPriceBarData,
   visibleDataRange,
 } from "../public/chart-data.js";
@@ -41,6 +43,25 @@ test("historyToLineData renders optional Hyperliquid perp fields by bucket close
   assert.deepEqual(historyToLineData(history, "funding", 5, "#45d3c3"), [
     { time: 10, value: -0.00002, color: NEGATIVE_TWAP_COLOR },
     { time: 15, value: 0.00003, color: "#45d3c3" },
+  ]);
+});
+
+test("historyToAlignedLineData preserves sparse indicator time buckets with whitespace points", () => {
+  const history = [
+    { time: 10, price: 100 },
+    { time: 11, price: 101, funding: 0.00001 },
+    { time: 12, price: 102 },
+    { time: 15, price: 103, funding: -0.00002 },
+  ];
+
+  assert.deepEqual(historyToAlignedLineData(history, "funding", 5, "#45d3c3"), [
+    { time: 10, value: 0.00001, color: "#45d3c3" },
+    { time: 15, value: -0.00002, color: NEGATIVE_TWAP_COLOR },
+  ]);
+
+  assert.deepEqual(historyToAlignedLineData(history, "openInterest", 5, "#7aa8ff"), [
+    { time: 10 },
+    { time: 15 },
   ]);
 });
 
@@ -150,6 +171,24 @@ test("incremental line and price updates match full bucket aggregation", () => {
 
   assert.deepEqual(line, historyToLineData(history, "next1h", 5, "#10b437"));
   assert.deepEqual(bars, historyToPriceBars(history, 5));
+});
+
+test("incremental aligned line updates keep empty buckets on the shared time axis", () => {
+  const points = [
+    { time: 10, price: 100 },
+    { time: 11, price: 101, funding: 0.00001 },
+    { time: 15, price: 102 },
+  ];
+
+  const line = points.reduce(
+    (data, point) => upsertAlignedLineDataPoint(data, point, "funding", 5, "#45d3c3"),
+    [],
+  );
+
+  assert.deepEqual(line, [
+    { time: 10, value: 0.00001, color: "#45d3c3" },
+    { time: 15 },
+  ]);
 });
 
 test("pruneSeriesData drops points older than the visible data window", () => {
