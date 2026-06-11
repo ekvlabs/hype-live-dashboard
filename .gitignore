@@ -9,4 +9,5 @@ node_modules/
 data/*.ndjson
 data/*.backup.ndjson
 data/*.sqlite
+data/*.sqlite-journal
 !data/.gitkeep
