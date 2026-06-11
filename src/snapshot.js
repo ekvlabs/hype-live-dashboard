@@ -6,6 +6,7 @@ import {
   getHypePrice,
   summarizeTwaps,
 } from "./pressure.js";
+import { normalizePerpAssetContext } from "./hyperliquid-asset-context.js";
 
 export function createSnapshot({
   twaps,
@@ -15,6 +16,7 @@ export function createSnapshot({
   perpContexts,
   candles = [],
   allMids,
+  livePerpAssetContext = null,
   widgetSettings = {},
   now = Date.now(),
 }) {
@@ -36,6 +38,7 @@ export function createSnapshot({
   };
   const price = getSnapshotPrice(priceCandles, marketState, allMids);
   const summary = summarizeTwaps(activeTwaps, marketState.hypeMarketIds);
+  const perp = getHypePerpContext(perpMeta, perpContexts, livePerpAssetContext, now);
 
   return {
     timestamp: now,
@@ -48,6 +51,7 @@ export function createSnapshot({
     widgetSettings,
     latestCandle: latestCandleInfo(priceCandles),
     priceCandles,
+    perp,
     hypeMarkets: marketState.hypeMarketIds.map((id) => {
       const market = marketState.marketsById.get(id);
       return {
@@ -59,6 +63,20 @@ export function createSnapshot({
       };
     }),
   };
+}
+
+function getHypePerpContext(perpMeta, perpContexts = [], livePerpAssetContext = null, now = Date.now()) {
+  const index = (perpMeta?.universe ?? []).findIndex((market) => market?.name?.toUpperCase() === "HYPE");
+  const restContext =
+    index >= 0
+      ? normalizePerpAssetContext(perpContexts[index], {
+          coin: "HYPE",
+          source: "rest",
+          updatedAt: now,
+        })
+      : null;
+
+  return livePerpAssetContext ? { ...restContext, ...livePerpAssetContext } : restContext;
 }
 
 function normalizePriceCandles(candles) {

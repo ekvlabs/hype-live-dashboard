@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { LiveDataService } from "../src/data-source.js";
 
-test("LiveDataService samples exactly the three chart values into history", () => {
+test("LiveDataService samples TWAP, price, and Hyperliquid perp values into history", () => {
   const service = new LiveDataService({ intervalMs: 1_000 });
   service.snapshot = {
     timestamp: 100,
@@ -12,6 +12,13 @@ test("LiveDataService samples exactly the three chart values into history", () =
       next1h: 10,
       next24h: 20,
       total: { buy: 0, sell: 0, net: 0 },
+    },
+    perp: {
+      funding: 0.00001,
+      openInterest: 1000,
+      premium: -0.0002,
+      markPx: 55.2,
+      oraclePx: 55.0,
     },
   };
 
@@ -24,12 +31,39 @@ test("LiveDataService samples exactly the three chart values into history", () =
       next24h: 25,
       total: { buy: 0, sell: 0, net: 0 },
     },
+    perp: {
+      funding: -0.00002,
+      openInterest: 1100,
+      premium: 0.0003,
+      markPx: 55.3,
+      oraclePx: 55.1,
+    },
   };
   service.sampleHistory(2_000);
 
   assert.deepEqual(service.getState().history, [
-    { t: 1_000, price: 55.1, next1h: 10, next24h: 20 },
-    { t: 2_000, price: 55.2, next1h: -5, next24h: 25 },
+    {
+      t: 1_000,
+      price: 55.1,
+      next1h: 10,
+      next24h: 20,
+      funding: 0.00001,
+      openInterest: 1000,
+      premium: -0.0002,
+      markPx: 55.2,
+      oraclePx: 55,
+    },
+    {
+      t: 2_000,
+      price: 55.2,
+      next1h: -5,
+      next24h: 25,
+      funding: -0.00002,
+      openInterest: 1100,
+      premium: 0.0003,
+      markPx: 55.3,
+      oraclePx: 55.1,
+    },
   ]);
 });
 

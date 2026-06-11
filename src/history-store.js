@@ -68,5 +68,16 @@ function cleanHistoryPoint(point) {
     next24h: Number(point?.next24h),
   };
 
-  return Object.values(cleanPoint).every(Number.isFinite) ? cleanPoint : null;
+  if (!Object.values(cleanPoint).every(Number.isFinite)) {
+    return null;
+  }
+
+  for (const key of ["funding", "openInterest", "premium", "markPx", "oraclePx"]) {
+    const value = Number(point?.[key]);
+    if (Number.isFinite(value)) {
+      cleanPoint[key] = value;
+    }
+  }
+
+  return cleanPoint;
 }

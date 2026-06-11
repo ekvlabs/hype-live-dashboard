@@ -27,3 +27,41 @@ test("HistoryStore persists points and loads only the rolling window", async () 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("HistoryStore preserves optional Hyperliquid perp fields without dropping legacy points", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hype-history-perp-"));
+  try {
+    const filePath = join(dir, "history.ndjson");
+    const store = new HistoryStore(filePath);
+
+    store.append({ t: 1_000, price: 50, next1h: 1, next24h: 2 });
+    store.append({
+      t: 2_000,
+      price: 51,
+      next1h: 3,
+      next24h: 4,
+      funding: "0.0000125",
+      openInterest: "12345.67",
+      premium: "-0.0002",
+      markPx: "51.1",
+      oraclePx: "51",
+    });
+
+    assert.deepEqual(store.load({ now: 2_000, maxHistoryHours: 1 }), [
+      { t: 1_000, price: 50, next1h: 1, next24h: 2 },
+      {
+        t: 2_000,
+        price: 51,
+        next1h: 3,
+        next24h: 4,
+        funding: 0.0000125,
+        openInterest: 12345.67,
+        premium: -0.0002,
+        markPx: 51.1,
+        oraclePx: 51,
+      },
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

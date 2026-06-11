@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>HYPE Live Dashboard</title>
-    <link rel="stylesheet" href="./styles.css?v=7">
+    <link rel="stylesheet" href="./styles.css?v=8">
   </head>
   <body>
     <main class="shell">
@@ -102,6 +102,38 @@
           </div>
           <div class="tv-chart" id="priceChart"></div>
         </article>
+
+        <article class="chart-panel">
+          <div class="chart-head">
+            <h2>Hyperliquid Funding</h2>
+            <strong id="chartFundingValue">--</strong>
+          </div>
+          <div class="tv-chart compact-chart" id="fundingChart"></div>
+        </article>
+
+        <article class="chart-panel">
+          <div class="chart-head">
+            <h2>Hyperliquid Open Interest</h2>
+            <strong id="chartOpenInterestValue">--</strong>
+          </div>
+          <div class="tv-chart compact-chart" id="openInterestChart"></div>
+        </article>
+
+        <article class="chart-panel">
+          <div class="chart-head">
+            <h2>Hyperliquid Premium</h2>
+            <strong id="chartPremiumValue">--</strong>
+          </div>
+          <div class="tv-chart compact-chart" id="premiumChart"></div>
+        </article>
+
+        <article class="chart-panel">
+          <div class="chart-head">
+            <h2>Mark / Oracle</h2>
+            <strong id="chartMarkOracleValue">--</strong>
+          </div>
+          <div class="tv-chart compact-chart" id="markOracleChart"></div>
+        </article>
       </section>
 
       <footer class="foot">
@@ -112,6 +144,6 @@
 
     <script src="./config.js?v=1"></script>
     <script src="./vendor/lightweight-charts.standalone.production.js"></script>
-    <script type="module" src="./app.js?v=17"></script>
+    <script type="module" src="./app.js?v=18"></script>
   </body>
 </html>

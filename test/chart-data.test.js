@@ -18,16 +18,29 @@ import {
   visibleDataRange,
 } from "../public/chart-data.js";
 
-test("normalizedHistory keeps one raw point per second with three saved values", () => {
+test("normalizedHistory keeps one raw point per second with saved chart values", () => {
   const history = normalizedHistory([
     { t: 1_000, next1h: "10", next24h: "20", price: "55.1" },
-    { t: 1_900, next1h: "11", next24h: "21", price: "55.2" },
+    { t: 1_900, next1h: "11", next24h: "21", price: "55.2", funding: "0.00001", openInterest: "12" },
     { t: 2_000, next1h: "-5", next24h: "30", price: "55.3" },
   ]);
 
   assert.deepEqual(history, [
-    { time: 1, next1h: 11, next24h: 21, price: 55.2 },
+    { time: 1, next1h: 11, next24h: 21, price: 55.2, funding: 0.00001, openInterest: 12 },
     { time: 2, next1h: -5, next24h: 30, price: 55.3 },
+  ]);
+});
+
+test("historyToLineData renders optional Hyperliquid perp fields by bucket close", () => {
+  const history = [
+    { time: 10, funding: 0.00001 },
+    { time: 11, funding: -0.00002 },
+    { time: 15, funding: 0.00003 },
+  ];
+
+  assert.deepEqual(historyToLineData(history, "funding", 5, "#45d3c3"), [
+    { time: 10, value: -0.00002, color: NEGATIVE_TWAP_COLOR },
+    { time: 15, value: 0.00003, color: "#45d3c3" },
   ]);
 });
 

@@ -266,6 +266,10 @@ h2 {
   background: linear-gradient(180deg, rgba(7, 24, 21, 0.92), rgba(9, 19, 18, 0.92));
 }
 
+.compact-chart {
+  height: 220px;
+}
+
 .tv-chart table {
   border-radius: 6px;
 }
