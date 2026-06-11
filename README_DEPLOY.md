@@ -6,8 +6,9 @@ Local dashboard for HYPE TWAP pressure and live HYPE price.
 
 - Node.js 20 or newer
 - Internet access to:
-  - `https://api.hypurrscan.io/twap/*`
-  - `https://api.hyperliquid.xyz/info`
+- `https://api.hypurrscan.io/twap/*`
+- `https://api.hyperliquid.xyz/info`
+- `wss://api.hyperliquid.xyz/ws`
 
 ## Install
 
@@ -47,11 +48,21 @@ npm test
 
 ## What It Stores
 
-The app keeps a rolling 7 day history. Every second it saves exactly three chart values:
+The app keeps a rolling 7 day history. Every second it saves the core chart values:
 
 - `next1h` summed TWAP pressure
 - `next24h` summed TWAP pressure
 - `price` live HYPE price
+
+When Hyperliquid perp context is available, the same history point also includes:
+
+- `funding`
+- `openInterest`
+- `premium`
+- `markPx`
+- `oraclePx`
+
+Older history rows without these optional fields remain valid.
 
 By default the history is persisted to:
 

@@ -23,6 +23,13 @@ export function normalizedHistory(history) {
       next1h: Number(point.next1h),
       next24h: Number(point.next24h),
     });
+    const normalizedPoint = byTime.get(time);
+    for (const key of ["funding", "openInterest", "premium", "markPx", "oraclePx"]) {
+      const value = Number(point?.[key]);
+      if (Number.isFinite(value)) {
+        normalizedPoint[key] = value;
+      }
+    }
   }
 
   return [...byTime.values()].sort((a, b) => a.time - b.time);

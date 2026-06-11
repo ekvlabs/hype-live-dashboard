@@ -11,12 +11,13 @@ import {
   shouldKeepLiveFollowing,
   upsertLineDataPoint,
   upsertPriceBarData,
-} from "./chart-data.js?v=15";
+} from "./chart-data.js?v=16";
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;
 const DEFAULT_RANGE_HOURS = 1;
 const CHART_HEIGHT = 280;
+const COMPACT_CHART_HEIGHT = 220;
 const API_BASE_URL = normalizeApiBaseUrl(window.HYPE_CONFIG?.apiBaseUrl ?? window.HYPE_API_BASE_URL ?? "");
 
 const {
@@ -45,10 +46,18 @@ const elements = {
   chartTwap1hValue: document.querySelector("#chartTwap1hValue"),
   chartTwap24hValue: document.querySelector("#chartTwap24hValue"),
   chartPriceValue: document.querySelector("#chartPriceValue"),
+  chartFundingValue: document.querySelector("#chartFundingValue"),
+  chartOpenInterestValue: document.querySelector("#chartOpenInterestValue"),
+  chartPremiumValue: document.querySelector("#chartPremiumValue"),
+  chartMarkOracleValue: document.querySelector("#chartMarkOracleValue"),
   priceChartTitle: document.querySelector("#priceChartTitle"),
   twap1hChart: document.querySelector("#twap1hChart"),
   twap24hChart: document.querySelector("#twap24hChart"),
   priceChart: document.querySelector("#priceChart"),
+  fundingChart: document.querySelector("#fundingChart"),
+  openInterestChart: document.querySelector("#openInterestChart"),
+  premiumChart: document.querySelector("#premiumChart"),
+  markOracleChart: document.querySelector("#markOracleChart"),
 };
 
 const chartEntries = [
@@ -59,6 +68,7 @@ const chartEntries = [
     color: "#10b437",
     type: "line",
     formatter: formatAxisMoney,
+    zeroLine: true,
   },
   {
     id: "twap24h",
@@ -67,12 +77,52 @@ const chartEntries = [
     color: "#45d3c3",
     type: "line",
     formatter: formatAxisMoney,
+    zeroLine: true,
   },
   {
     id: "price",
     container: elements.priceChart,
     type: "bar",
     formatter: formatAxisPrice,
+  },
+  {
+    id: "funding",
+    container: elements.fundingChart,
+    key: "funding",
+    color: "#9ad95f",
+    type: "line",
+    formatter: formatAxisPercent,
+    height: COMPACT_CHART_HEIGHT,
+    zeroLine: true,
+  },
+  {
+    id: "openInterest",
+    container: elements.openInterestChart,
+    key: "openInterest",
+    color: "#7aa8ff",
+    type: "line",
+    formatter: formatAxisCompact,
+    height: COMPACT_CHART_HEIGHT,
+  },
+  {
+    id: "premium",
+    container: elements.premiumChart,
+    key: "premium",
+    color: "#d982ff",
+    type: "line",
+    formatter: formatAxisBps,
+    height: COMPACT_CHART_HEIGHT,
+    zeroLine: true,
+  },
+  {
+    id: "markOracle",
+    container: elements.markOracleChart,
+    key: "markPx",
+    color: "#f3bc45",
+    type: "line",
+    formatter: formatAxisPrice,
+    height: COMPACT_CHART_HEIGHT,
+    extraLines: [{ key: "oraclePx", color: "#45d3c3" }],
   },
 ].map(createChartEntry);
 
@@ -98,7 +148,7 @@ connectEvents();
 fetchSnapshot();
 
 function createChartEntry(definition) {
-  const chart = createChart(definition.container, chartOptions(definition.container));
+  const chart = createChart(definition.container, chartOptions(definition.container, definition.height ?? CHART_HEIGHT));
   const series =
     definition.type === "bar"
       ? chart.addSeries(BarSeries, {
@@ -121,8 +171,24 @@ function createChartEntry(definition) {
             formatter: definition.formatter,
           },
         });
+  const extraSeries = (definition.extraLines ?? []).map((line) => ({
+    ...line,
+    series: chart.addSeries(LineSeries, {
+      color: line.color,
+      lineWidth: 2,
+      pointMarkersVisible: true,
+      pointMarkersRadius: 2,
+      crosshairMarkerVisible: true,
+      priceFormat: {
+        type: "custom",
+        formatter: definition.formatter,
+      },
+    }),
+    data: [],
+    dataByTime: new Map(),
+  }));
 
-  if (definition.type === "line") {
+  if (definition.zeroLine) {
     series.createPriceLine({
       price: 0,
       color: "rgba(255,255,255,0.42)",
@@ -138,13 +204,14 @@ function createChartEntry(definition) {
     series,
     data: [],
     dataByTime: new Map(),
+    extraSeries,
   };
 }
 
-function chartOptions(container) {
+function chartOptions(container, height = CHART_HEIGHT) {
   return {
     width: container.clientWidth,
-    height: CHART_HEIGHT,
+    height,
     autoSize: true,
     layout: {
       background: { type: "solid", color: "transparent" },
@@ -230,7 +297,7 @@ function wireResize() {
     for (const entry of chartEntries) {
       entry.chart.applyOptions({
         width: entry.container.clientWidth,
-        height: CHART_HEIGHT,
+        height: entry.height ?? CHART_HEIGHT,
       });
     }
     applyTimeScaleDensity();
@@ -437,6 +504,10 @@ function render(state, options = {}) {
   setText(elements.chartTwap1hValue, formatMoney(snapshot.pressure.next1h, true));
   setText(elements.chartTwap24hValue, formatMoney(snapshot.pressure.next24h, true));
   setText(elements.chartPriceValue, formatPrice(snapshot.price));
+  setText(elements.chartFundingValue, formatPercent(snapshot.perp?.funding));
+  setText(elements.chartOpenInterestValue, formatCompact(snapshot.perp?.openInterest));
+  setText(elements.chartPremiumValue, formatBps(snapshot.perp?.premium));
+  setText(elements.chartMarkOracleValue, formatMarkOracle(snapshot.perp));
   setText(elements.priceChartTitle, `HYPE ${selectedResolution.label} price`);
   setText(elements.updatedAt, `Last update: ${formatTime(snapshot.timestamp)}`);
   setText(elements.marketList, `Markets: ${snapshot.hypeMarkets.map((market) => market.coin).join(", ")}`);
@@ -507,12 +578,19 @@ function historyPointFromSnapshot(snapshot) {
     return null;
   }
 
-  return {
+  const point = {
     t: Date.now(),
     price: snapshot.price,
     next1h: snapshot.pressure.next1h,
     next24h: snapshot.pressure.next24h,
   };
+  for (const key of ["funding", "openInterest", "premium", "markPx", "oraclePx"]) {
+    const value = Number(snapshot.perp?.[key]);
+    if (Number.isFinite(value)) {
+      point[key] = value;
+    }
+  }
+  return point;
 }
 
 function setChartData(history) {
@@ -525,6 +603,12 @@ function setChartData(history) {
     entry.data = data;
     entry.dataByTime = new Map(data.map((point) => [point.time, point]));
     entry.series.setData(data);
+    for (const extra of entry.extraSeries ?? []) {
+      const extraData = historyToLineData(chartHistory, extra.key, selectedResolution.seconds, extra.color);
+      extra.data = extraData;
+      extra.dataByTime = new Map(extraData.map((point) => [point.time, point]));
+      extra.series.setData(extraData);
+    }
     autoScaleVertical(entry);
   }
 }
@@ -546,6 +630,18 @@ function appendChartData(point) {
       entry.series.setData(prunedData);
     } else {
       entry.series.update(updatedPoint);
+    }
+    for (const extra of entry.extraSeries ?? []) {
+      const nextExtraData = upsertLineDataPoint(extra.data, point, extra.key, selectedResolution.seconds, extra.color);
+      const prunedExtraData = pruneSeriesData(nextExtraData, oldestTime);
+      const updatedExtraPoint = nextExtraData.find((item) => Number(item.time) === bucketTime);
+      extra.data = prunedExtraData;
+      extra.dataByTime = new Map(prunedExtraData.map((item) => [item.time, item]));
+      if (prunedExtraData.length < nextExtraData.length || !updatedExtraPoint) {
+        extra.series.setData(prunedExtraData);
+      } else {
+        extra.series.update(updatedExtraPoint);
+      }
     }
     autoScaleVertical(entry);
   }
@@ -598,14 +694,15 @@ function autoScaleAllVertical() {
 }
 
 function autoScaleVertical(entry) {
-  if (!entry.data.length) {
+  const data = [entry.data, ...(entry.extraSeries ?? []).map((extra) => extra.data)].flat();
+  if (!data.length) {
     return;
   }
 
   const priceScale = entry.series.priceScale();
   const priceRange = priceScale.getVisibleRange();
   const timeRange = entry.chart.timeScale().getVisibleRange();
-  if (needsVerticalAutoscale(entry.data, priceRange, timeRange)) {
+  if (needsVerticalAutoscale(data, priceRange, timeRange)) {
     priceScale.setAutoScale(true);
   }
 }
@@ -675,6 +772,63 @@ function formatAxisPrice(value) {
     return "";
   }
   return `$${Number(value).toFixed(3)}`;
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(Number(value))) {
+    return "--";
+  }
+  return `${(Number(value) * 100).toFixed(4)}%`;
+}
+
+function formatAxisPercent(value) {
+  if (!Number.isFinite(Number(value))) {
+    return "";
+  }
+  return `${(Number(value) * 100).toFixed(4)}%`;
+}
+
+function formatBps(value) {
+  if (!Number.isFinite(Number(value))) {
+    return "--";
+  }
+  return `${(Number(value) * 10_000).toFixed(2)} bp`;
+}
+
+function formatAxisBps(value) {
+  if (!Number.isFinite(Number(value))) {
+    return "";
+  }
+  return `${(Number(value) * 10_000).toFixed(1)}bp`;
+}
+
+function formatCompact(value) {
+  if (!Number.isFinite(Number(value))) {
+    return "--";
+  }
+  return formatAxisCompact(value);
+}
+
+function formatAxisCompact(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "";
+  }
+  const abs = Math.abs(number);
+  if (abs >= 1_000_000) {
+    return `${(number / 1_000_000).toFixed(2)}M`;
+  }
+  if (abs >= 1_000) {
+    return `${(number / 1_000).toFixed(1)}K`;
+  }
+  return number.toFixed(2);
+}
+
+function formatMarkOracle(perp) {
+  if (!perp) {
+    return "--";
+  }
+  return `${formatPrice(perp.markPx)} / ${formatPrice(perp.oraclePx)}`;
 }
 
 function formatTime(timestamp) {

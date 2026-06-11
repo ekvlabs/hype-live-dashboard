@@ -17,7 +17,15 @@ test("createSnapshot combines TWAP pressure, HYPE price, and summary", () => {
   const perpMeta = { universe: [] };
   perpMeta.universe[159] = { name: "HYPE" };
   const perpContexts = [];
-  perpContexts[159] = { midPx: "51" };
+  perpContexts[159] = {
+    funding: "0.0000125",
+    openInterest: "1000",
+    premium: "0.00031774",
+    markPx: "51.1",
+    midPx: "51",
+    oraclePx: "50.9",
+    dayNtlVlm: "123456",
+  };
   const candles = [
     { t: now - 60_000, o: "49", h: "50", l: "48.5", c: "49.5", v: "10" },
     { t: now, o: "49.5", h: "52", l: "49", c: "51.25", v: "12" },
@@ -62,6 +70,18 @@ test("createSnapshot combines TWAP pressure, HYPE price, and summary", () => {
   assert.equal(snapshot.pressure.total.buy, 1000);
   assert.equal(snapshot.pressure.total.sell, 250);
   assert.equal(snapshot.pressure.total.net, 750);
+  assert.deepEqual(snapshot.perp, {
+    coin: "HYPE",
+    funding: 0.0000125,
+    openInterest: 1000,
+    premium: 0.00031774,
+    markPx: 51.1,
+    midPx: 51,
+    oraclePx: 50.9,
+    dayNtlVlm: 123456,
+    source: "rest",
+    updatedAt: now,
+  });
   assert.equal(snapshot.summary.buyCount, 1);
   assert.equal(snapshot.summary.sellCount, 1);
   assert.equal(snapshot.activeHypeTwaps, 2);

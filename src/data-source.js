@@ -1,6 +1,7 @@
 import { createSnapshot } from "./snapshot.js";
 import { historyPointLimit, trimHistory } from "./history.js";
 import { fetchJson, fetchJsonWithCurlFallback } from "./http-json.js";
+import { HyperliquidAssetContextStream } from "./hyperliquid-asset-context.js";
 import { loadWidgetSettings } from "./widget-settings.js";
 import { compactState, historyPointEvent } from "./events.js";
 
@@ -15,6 +16,7 @@ export class LiveDataService {
     historyCompactMs = 10 * 60 * 1000,
     historyStore = null,
     notifier = null,
+    assetContextStream = new HyperliquidAssetContextStream(),
     widgetSettings,
   } = {}) {
     this.fetchFn = fetchFn;
@@ -35,6 +37,7 @@ export class LiveDataService {
     this.sampleTimer = null;
     this.inFlight = null;
     this.historyStore = historyStore;
+    this.assetContextStream = assetContextStream;
     this.nextHistoryCompactAt = Date.now() + historyCompactMs;
     this.notifier = notifier;
     this.widgetSettings = widgetSettings ?? null;
@@ -42,6 +45,7 @@ export class LiveDataService {
 
   async start() {
     this.loadStoredHistory();
+    this.assetContextStream?.start?.();
     await this.refresh();
     this.sampleHistory();
     this.sampleTimer = setInterval(() => {
@@ -61,6 +65,7 @@ export class LiveDataService {
       clearInterval(this.sampleTimer);
       this.sampleTimer = null;
     }
+    this.assetContextStream?.stop?.();
   }
 
   subscribe(listener) {
@@ -163,6 +168,7 @@ export class LiveDataService {
       spotContexts,
       candles: [],
       allMids,
+      livePerpAssetContext: this.assetContextStream?.latest?.() ?? null,
       widgetSettings,
       now: Date.now(),
     });
@@ -211,10 +217,17 @@ async function postHyperliquidInfo(fetchFn, body) {
 }
 
 function toHistoryPoint(snapshot, sampledAt = snapshot.timestamp) {
-  return {
+  const point = {
     t: sampledAt,
     price: snapshot.price,
     next1h: snapshot.pressure.next1h,
     next24h: snapshot.pressure.next24h,
   };
+  for (const key of ["funding", "openInterest", "premium", "markPx", "oraclePx"]) {
+    const value = Number(snapshot.perp?.[key]);
+    if (Number.isFinite(value)) {
+      point[key] = value;
+    }
+  }
+  return point;
 }
