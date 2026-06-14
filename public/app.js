@@ -1,7 +1,7 @@
 import {
   RESOLUTIONS,
   historyToAlignedLineData,
-  historyToPriceBars,
+  historyToAlignedPriceBars,
   minimumBarSpacingForRange,
   needsVerticalAutoscale,
   nextLiveVisibleRange,
@@ -10,8 +10,8 @@ import {
   selectedHistoryWindow,
   shouldKeepLiveFollowing,
   upsertAlignedLineDataPoint,
-  upsertPriceBarData,
-} from "./chart-data.js?v=17";
+  upsertAlignedPriceBarData,
+} from "./chart-data.js?v=18";
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;
@@ -322,8 +322,8 @@ function applyTimeScaleDensity() {
 
 function wireChartSync() {
   for (const entry of chartEntries) {
-    entry.chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
-      syncVisibleRange(entry, range);
+    entry.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      syncVisibleLogicalRange(entry, range);
     });
 
     entry.chart.subscribeCrosshairMove((param) => {
@@ -332,7 +332,7 @@ function wireChartSync() {
   }
 }
 
-function syncVisibleRange(sourceEntry, range) {
+function syncVisibleLogicalRange(sourceEntry, range) {
   if (!range || isSyncingRange) {
     return;
   }
@@ -344,7 +344,7 @@ function syncVisibleRange(sourceEntry, range) {
   isSyncingRange = true;
   for (const entry of chartEntries) {
     if (entry !== sourceEntry) {
-      entry.chart.timeScale().setVisibleRange(range);
+      entry.chart.timeScale().setVisibleLogicalRange(range);
     }
   }
   isSyncingRange = false;
@@ -486,14 +486,13 @@ function render(state, options = {}) {
   };
   const snapshot = lastState.snapshot;
   setStatus(lastState.status);
-
-  if (!snapshot) {
-    setChartData([]);
-    return;
-  }
-
   const history = normalizedHistory(lastState.history ?? []);
   const config = lastState.config ?? {};
+
+  if (!snapshot) {
+    setChartData(history);
+    return;
+  }
 
   setText(elements.twap1h, formatMoney(snapshot.pressure.next1h, true));
   setText(elements.twap24h, formatMoney(snapshot.pressure.next24h, true));
@@ -598,7 +597,7 @@ function setChartData(history) {
   for (const entry of chartEntries) {
     const data =
       entry.type === "bar"
-        ? historyToPriceBars(chartHistory, selectedResolution.seconds)
+        ? historyToAlignedPriceBars(chartHistory, selectedResolution.seconds)
         : historyToAlignedLineData(chartHistory, entry.key, selectedResolution.seconds, entry.color);
     entry.data = data;
     entry.dataByTime = new Map(data.map((point) => [point.time, point]));
@@ -620,7 +619,7 @@ function appendChartData(point) {
   for (const entry of chartEntries) {
     const nextData =
       entry.type === "bar"
-        ? upsertPriceBarData(entry.data, point, selectedResolution.seconds)
+        ? upsertAlignedPriceBarData(entry.data, point, selectedResolution.seconds)
         : upsertAlignedLineDataPoint(entry.data, point, entry.key, selectedResolution.seconds, entry.color);
     const prunedData = pruneSeriesData(nextData, oldestTime);
     const updatedPoint = nextData.find((item) => Number(item.time) === bucketTime);

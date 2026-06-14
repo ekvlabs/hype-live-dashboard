@@ -73,3 +73,52 @@ test("LiveDataService keeps one week of one-second history by default", () => {
   assert.equal(service.getState().config.maxHistoryHours, 168);
   assert.equal(service.getState().config.historyLimit, 604_800);
 });
+
+test("LiveDataService keeps retrying after the initial refresh fails", async () => {
+  let calls = 0;
+  const service = new LiveDataService({
+    intervalMs: 5,
+    assetContextStream: { start() {}, stop() {} },
+  });
+  service.fetchSnapshot = async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw new Error("temporary upstream failure");
+    }
+    return {
+      timestamp: 2_000,
+      price: 55.2,
+      pressure: {
+        next1h: 10,
+        next24h: 20,
+        total: { buy: 20, sell: 0, net: 20 },
+      },
+      summary: {},
+      activeTwaps: 1,
+      activeHypeTwaps: 1,
+      hypeMarkets: [],
+    };
+  };
+
+  await service.start();
+  try {
+    await waitFor(() => service.getState().snapshot);
+    assert.equal(service.getState().status.ok, true);
+    assert.equal(service.getState().snapshot.price, 55.2);
+    assert.equal(calls >= 2, true);
+  } finally {
+    service.stop();
+  }
+});
+
+async function waitFor(predicate, timeoutMs = 200) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = predicate();
+    if (value) {
+      return value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Timed out waiting for condition");
+}

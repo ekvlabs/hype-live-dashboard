@@ -80,6 +80,33 @@ export function historyToPriceBars(history, resolutionSeconds) {
   return bars;
 }
 
+export function historyToAlignedPriceBars(history, resolutionSeconds) {
+  const buckets = bucketHistory(history, resolutionSeconds);
+  const bars = [];
+  let previousClose = null;
+
+  for (const bucket of buckets) {
+    const prices = bucket.points.map((point) => Number(point.price)).filter(Number.isFinite);
+    if (!prices.length) {
+      bars.push({ time: bucket.time });
+      continue;
+    }
+
+    const open = previousClose ?? prices[0];
+    const close = prices.at(-1);
+    bars.push({
+      time: bucket.time,
+      open,
+      high: Math.max(open, ...prices),
+      low: Math.min(open, ...prices),
+      close,
+    });
+    previousClose = close;
+  }
+
+  return bars;
+}
+
 export function visibleDataRange(data, timeRange = null) {
   let min = Infinity;
   let max = -Infinity;
@@ -219,24 +246,36 @@ export function upsertPriceBarData(data, historyPoint, resolutionSeconds) {
   const existingIndex = next.findIndex((point) => Number(point.time) === time);
   if (existingIndex >= 0) {
     const bar = next[existingIndex];
-    next[existingIndex] = {
-      ...bar,
-      high: Math.max(Number(bar.high), price),
-      low: Math.min(Number(bar.low), price),
-      close: price,
-    };
+    next[existingIndex] = isPriceBarPoint(bar)
+      ? {
+          ...bar,
+          high: Math.max(Number(bar.high), price),
+          low: Math.min(Number(bar.low), price),
+          close: price,
+        }
+      : priceBarFromPreviousClose(next, time, price);
     return next;
   }
 
-  const previous = [...next].reverse().find((point) => Number(point.time) < time);
-  const open = Number(previous?.close);
-  return upsertSeriesPoint(next, {
-    time,
-    open: Number.isFinite(open) ? open : price,
-    high: Number.isFinite(open) ? Math.max(open, price) : price,
-    low: Number.isFinite(open) ? Math.min(open, price) : price,
-    close: price,
-  });
+  return upsertSeriesPoint(next, priceBarFromPreviousClose(next, time, price));
+}
+
+export function upsertAlignedPriceBarData(data, historyPoint, resolutionSeconds) {
+  const time = bucketTimeForPoint(historyPoint, resolutionSeconds);
+  if (!Number.isFinite(time)) {
+    return data ?? [];
+  }
+
+  const price = Number(historyPoint?.price);
+  if (Number.isFinite(price)) {
+    return upsertPriceBarData(data, historyPoint, resolutionSeconds);
+  }
+
+  const current = data ?? [];
+  if (current.some((point) => Number(point.time) === time)) {
+    return current;
+  }
+  return upsertSeriesPoint(current, { time });
 }
 
 export function pruneSeriesData(data, oldestTime) {
@@ -299,6 +338,27 @@ function alignedLinePoint(bucket, key, positiveColor) {
   }
 
   return { time: bucket.time };
+}
+
+function priceBarFromPreviousClose(data, time, price) {
+  const previous = [...(data ?? [])].reverse().find((point) => Number(point.time) < time && isPriceBarPoint(point));
+  const open = Number(previous?.close);
+  return {
+    time,
+    open: Number.isFinite(open) ? open : price,
+    high: Number.isFinite(open) ? Math.max(open, price) : price,
+    low: Number.isFinite(open) ? Math.min(open, price) : price,
+    close: price,
+  };
+}
+
+function isPriceBarPoint(point) {
+  return (
+    Number.isFinite(Number(point?.open)) &&
+    Number.isFinite(Number(point?.high)) &&
+    Number.isFinite(Number(point?.low)) &&
+    Number.isFinite(Number(point?.close))
+  );
 }
 
 function upsertSeriesPoint(data, point) {

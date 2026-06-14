@@ -46,14 +46,14 @@ export class LiveDataService {
   async start() {
     this.loadStoredHistory();
     this.assetContextStream?.start?.();
-    await this.refresh();
-    this.sampleHistory();
-    this.sampleTimer = setInterval(() => {
-      this.sampleHistory();
-    }, this.intervalMs);
-    this.timer = setInterval(() => {
-      this.refresh().catch(() => {});
-    }, this.intervalMs);
+    this.startTimers();
+    await this.refresh()
+      .then(() => {
+        this.sampleHistory();
+      })
+      .catch((error) => {
+        console.error("Initial data fetch failed:", error.message);
+      });
   }
 
   stop() {
@@ -71,6 +71,19 @@ export class LiveDataService {
   subscribe(listener) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  startTimers() {
+    if (!this.sampleTimer) {
+      this.sampleTimer = setInterval(() => {
+        this.sampleHistory();
+      }, this.intervalMs);
+    }
+    if (!this.timer) {
+      this.timer = setInterval(() => {
+        this.refresh().catch(() => {});
+      }, this.intervalMs);
+    }
   }
 
   loadStoredHistory(now = Date.now()) {

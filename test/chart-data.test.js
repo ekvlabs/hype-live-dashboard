@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   NEGATIVE_TWAP_COLOR,
   historyToAlignedLineData,
+  historyToAlignedPriceBars,
   historyToLineData,
   historyToPriceBars,
   minimumBarSpacingForRange,
@@ -16,6 +17,7 @@ import {
   shouldKeepLiveFollowing,
   upsertLineDataPoint,
   upsertAlignedLineDataPoint,
+  upsertAlignedPriceBarData,
   upsertPriceBarData,
   visibleDataRange,
 } from "../public/chart-data.js";
@@ -78,6 +80,20 @@ test("historyToPriceBars aggregates live prices into selected resolution OHLC ba
     { time: 10, open: 100, high: 102, low: 99, close: 99 },
     { time: 15, open: 99, high: 101, low: 98, close: 98 },
   ]);
+});
+
+test("aligned chart series keep identical bucket times for synchronized time scales", () => {
+  const history = [
+    { time: 10, price: 100, next1h: 10 },
+    { time: 11, next1h: 11, funding: 0.00001 },
+    { time: 15, price: 101, funding: 0.00002 },
+  ];
+
+  const times = (points) => points.map((point) => point.time);
+
+  assert.deepEqual(times(historyToAlignedPriceBars(history, 5)), [10, 15]);
+  assert.deepEqual(times(historyToAlignedLineData(history, "next1h", 5, "#10b437")), [10, 15]);
+  assert.deepEqual(times(historyToAlignedLineData(history, "funding", 5, "#45d3c3")), [10, 15]);
 });
 
 test("historyToLineData samples TWAP by bucket close and colors negative values red", () => {
@@ -188,6 +204,21 @@ test("incremental aligned line updates keep empty buckets on the shared time axi
   assert.deepEqual(line, [
     { time: 10, value: 0.00001, color: "#45d3c3" },
     { time: 15 },
+  ]);
+});
+
+test("incremental aligned price updates keep empty buckets on the shared time axis", () => {
+  const points = [
+    { time: 10, price: 100 },
+    { time: 11, next1h: 101 },
+    { time: 15, price: 102 },
+  ];
+
+  const bars = points.reduce((data, point) => upsertAlignedPriceBarData(data, point, 5), []);
+
+  assert.deepEqual(bars, [
+    { time: 10, open: 100, high: 100, low: 100, close: 100 },
+    { time: 15, open: 100, high: 102, low: 100, close: 102 },
   ]);
 });
 
