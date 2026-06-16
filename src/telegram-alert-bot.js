@@ -67,11 +67,16 @@ export class TelegramAlertBot {
   }
 
   seedHistory(history = []) {
-    this.samples = history.map(sampleFromHistoryPoint).filter(Boolean);
-    const latest = this.samples.at(-1);
-    if (latest) {
-      this.trimSamples(latest.t);
+    const latestTimestamp = latestHistoryTimestamp(history);
+    if (!Number.isFinite(latestTimestamp)) {
+      this.samples = [];
+      return;
     }
+    const cutoff = latestTimestamp - DRIVER_HISTORY_RETENTION_MS;
+    this.samples = history
+      .filter((point) => Number(point?.t) >= cutoff)
+      .map(sampleFromHistoryPoint)
+      .filter(Boolean);
   }
 
   start() {
@@ -417,6 +422,16 @@ function sampleFromHistoryPoint(point) {
     q24: next24h / price,
     premium: Number(point?.premium),
   };
+}
+
+function latestHistoryTimestamp(history) {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const timestamp = Number(history[index]?.t);
+    if (Number.isFinite(timestamp)) {
+      return timestamp;
+    }
+  }
+  return NaN;
 }
 
 function detectTwapDriverSignal(samples, current) {

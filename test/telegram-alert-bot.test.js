@@ -78,6 +78,32 @@ test("TelegramAlertBot tracks TWAP_DRIVER execution stats", async () => {
   assert.match(messages.at(-1).text, /Net taker: \+117bp/);
 });
 
+test("TelegramAlertBot seeds only the history needed for TWAP_DRIVER", () => {
+  const bot = new TelegramAlertBot({
+    botToken: "token",
+    store: new BotStore(":memory:"),
+  });
+
+  bot.seedHistory([
+    historyPointAt(1_000, 100, 1_000, 1_000),
+    historyPointAt(2 * 60 * 60_000, 100, 2_000, 2_000),
+  ]);
+
+  assert.deepEqual(
+    bot.samples.map((sample) => sample.t),
+    [2 * 60 * 60_000],
+  );
+});
+
+function historyPointAt(t, price, q1, q24) {
+  return {
+    t,
+    price,
+    next1h: q1 * price,
+    next24h: q24 * price,
+  };
+}
+
 test("TelegramAlertBot aborts in-flight polling when stopped", async () => {
   const store = new BotStore(":memory:");
   let signalSeen = false;
