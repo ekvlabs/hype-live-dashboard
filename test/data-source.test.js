@@ -74,6 +74,25 @@ test("LiveDataService keeps one week of one-second history by default", () => {
   assert.equal(service.getState().config.historyLimit, 604_800);
 });
 
+test("LiveDataService seeds notifier with stored history", () => {
+  const storedHistory = [{ t: 1_000, price: 55, next1h: 10, next24h: 20 }];
+  let seededHistory = null;
+  const service = new LiveDataService({
+    historyStore: {
+      load: () => storedHistory,
+    },
+    notifier: {
+      seedHistory(history) {
+        seededHistory = history;
+      },
+    },
+  });
+
+  service.loadStoredHistory(2_000);
+
+  assert.deepEqual(seededHistory, storedHistory);
+});
+
 test("LiveDataService keeps retrying after the initial refresh fails", async () => {
   let calls = 0;
   const service = new LiveDataService({

@@ -3,9 +3,19 @@ import { fileURLToPath } from "node:url";
 
 import { BotStore } from "./bot-store.js";
 
-const DEFAULT_COOLDOWN_MS = 60_000;
+const DEFAULT_COOLDOWN_MS = 30 * 60 * 1_000;
 const DEFAULT_DB_PATH = join(fileURLToPath(new URL("..", import.meta.url)), "data", "bot.sqlite");
-const SUPPORTED_WINDOWS = new Set([5, 15]);
+const DRIVER_Q24_THRESHOLD_HYPE = 80_000;
+const DRIVER_LOOKBACK_MS = 60 * 60 * 1_000;
+const DRIVER_PRICE_SHORT_LOOKBACK_MS = 5 * 60 * 1_000;
+const DRIVER_MIN_MONO = 0.65;
+const DRIVER_MAX_PRICE_5M_BP = 10;
+const DRIVER_MAX_PRICE_60M_BP = 80;
+const DRIVER_MAX_PREMIUM_BP = 8;
+const DRIVER_HISTORY_RETENTION_MS = DRIVER_LOOKBACK_MS + 60_000;
+const DRIVER_STOP_BP = 20;
+const DRIVER_TAKE_PROFIT_BP = 126;
+const DRIVER_MAX_HOLD_MINUTES = 45;
 
 export class TelegramAlertBot {
   constructor({
@@ -22,6 +32,8 @@ export class TelegramAlertBot {
     this.pollTimeoutSeconds = pollTimeoutSeconds;
     this.offset = 0;
     this.samples = [];
+    this.signalStats = createSignalStats();
+    this.openSignals = [];
     this.pollTimer = null;
     this.polling = false;
     this.pollAbortController = null;
@@ -52,6 +64,14 @@ export class TelegramAlertBot {
       };
     }
     return this.store.stats();
+  }
+
+  seedHistory(history = []) {
+    this.samples = history.map(sampleFromHistoryPoint).filter(Boolean);
+    const latest = this.samples.at(-1);
+    if (latest) {
+      this.trimSamples(latest.t);
+    }
   }
 
   start() {
@@ -150,36 +170,24 @@ export class TelegramAlertBot {
       });
     }
 
-    if (text.startsWith("/set")) {
-      const threshold = parsePositiveNumber(text.split(/\s+/)[1]);
-      if (!threshold) {
-        await this.sendMessage(chatId, "Use /set 500000");
-        return false;
-      }
-      this.store.setThreshold(chatId, threshold, now);
-      await this.sendMessage(chatId, `Alert threshold: ${formatMoney(threshold)}$`);
-      return true;
-    }
-
-    if (text.startsWith("/window")) {
-      const windowSeconds = Number(text.split(/\s+/)[1]);
-      if (!SUPPORTED_WINDOWS.has(windowSeconds)) {
-        await this.sendMessage(chatId, "Use /window 5 or /window 15");
-        return false;
-      }
-      this.store.setWindowSeconds(chatId, windowSeconds, now);
-      await this.sendMessage(chatId, `Alert window: ${windowSeconds}s`);
+    if (text === "/signal") {
+      await this.sendMessage(chatId, signalDescriptionText());
       return true;
     }
 
     if (text === "/status") {
-      await this.sendMessage(chatId, statusText(this.store.getUser(chatId)));
+      await this.sendMessage(chatId, statusText(this.store.getUser(chatId), this.signalStats));
       return true;
     }
 
     if (text === "/stop") {
       this.store.disableUser(chatId, now);
-      await this.sendMessage(chatId, "Alerts disabled. Use /start to enable again.");
+      await this.sendMessage(chatId, "TWAP_DRIVER alerts disabled. Use /start to enable again.");
+      return true;
+    }
+
+    if (text.startsWith("/set") || text.startsWith("/window")) {
+      await this.sendMessage(chatId, "Custom threshold/window alerts are disabled. Use /signal for TWAP_DRIVER rules.");
       return true;
     }
 
@@ -192,36 +200,31 @@ export class TelegramAlertBot {
       return false;
     }
 
-    const sample = {
-      t: Number(snapshot.timestamp) || Date.now(),
-      next1h: Number(snapshot.pressure.next1h),
-    };
-    if (!Number.isFinite(sample.next1h)) {
+    const sample = sampleFromSnapshot(snapshot);
+    if (!sample) {
       return false;
     }
 
     this.samples.push(sample);
     this.trimSamples(sample.t);
+    this.updateSignalOutcomes(sample);
+
+    const signal = detectTwapDriverSignal(this.samples, sample);
+    if (!signal) {
+      return false;
+    }
 
     let sent = false;
     for (const user of this.store.listEnabledUsers()) {
-      const previous = this.sampleAtOrBefore(sample.t - user.windowSeconds * 1_000);
-      if (!previous) {
+      if (user.lastAlertAt > 0 && sample.t - user.lastAlertAt < this.cooldownMs) {
         continue;
       }
-      const delta = sample.next1h - previous.next1h;
-      if (
-        Math.abs(delta) < user.threshold ||
-        (user.lastAlertAt > 0 && sample.t - user.lastAlertAt < this.cooldownMs)
-      ) {
-        continue;
-      }
-      await this.sendMessage(
-        user.chatId,
-        `HYPE alert\nTWAP 1h: ${formatSigned(delta)}$ in ${user.windowSeconds}s\nCurrent: ${formatSigned(sample.next1h)}$`,
-      );
+      await this.sendMessage(user.chatId, formatTwapDriverAlert(signal));
       this.store.markAlertSent(user.chatId, sample.t);
       sent = true;
+    }
+    if (sent) {
+      this.trackOpenSignal(signal, sample);
     }
     return sent;
   }
@@ -236,10 +239,48 @@ export class TelegramAlertBot {
   }
 
   trimSamples(now) {
-    const cutoff = now - 60_000;
+    const cutoff = now - DRIVER_HISTORY_RETENTION_MS;
     while (this.samples.length && this.samples[0].t < cutoff) {
       this.samples.shift();
     }
+  }
+
+  trackOpenSignal(signal, sample) {
+    const tracked = {
+      id: `${sample.t}:${signal.side}`,
+      side: signal.side,
+      entryPrice: sample.price,
+      openedAt: sample.t,
+      expiresAt: sample.t + DRIVER_MAX_HOLD_MINUTES * 60_000,
+    };
+    this.openSignals.push(tracked);
+    this.signalStats.total += 1;
+    this.signalStats.open += 1;
+  }
+
+  updateSignalOutcomes(sample) {
+    for (const signal of this.openSignals) {
+      if (signal.closedAt) {
+        continue;
+      }
+      const moveBp = priceMoveBp(signal.entryPrice, sample.price, signal.side);
+      if (moveBp <= -DRIVER_STOP_BP) {
+        this.closeTrackedSignal(signal, "SL", -DRIVER_STOP_BP, sample.t);
+      } else if (moveBp >= DRIVER_TAKE_PROFIT_BP) {
+        this.closeTrackedSignal(signal, "TP", DRIVER_TAKE_PROFIT_BP, sample.t);
+      } else if (sample.t >= signal.expiresAt) {
+        this.closeTrackedSignal(signal, "TIME", moveBp, sample.t);
+      }
+    }
+    this.openSignals = this.openSignals.filter((signal) => !signal.closedAt);
+  }
+
+  closeTrackedSignal(signal, outcome, moveBp, closedAt) {
+    signal.closedAt = closedAt;
+    this.signalStats.open = Math.max(0, this.signalStats.open - 1);
+    this.signalStats[outcome.toLowerCase()] += 1;
+    this.signalStats.netTakerBp += moveBp - 9;
+    this.signalStats.netMakerBp += moveBp - 3;
   }
 
   async sendMessage(chatId, text) {
@@ -265,29 +306,65 @@ export class TelegramAlertBot {
 
 function helpText() {
   return [
-    "HYPE Alert Bot",
+    "HYPE TWAP_DRIVER Alert Bot",
     "Commands:",
-    "/set 500000 - TWAP 1h delta threshold",
-    "/window 5 - alert window, 5 or 15 seconds",
-    "/status - current settings",
+    "/start - enable TWAP_DRIVER alerts",
     "/stop - disable alerts",
+    "/status - current subscription and signal stats",
+    "/signal - signal description",
+    "",
+    "The bot sends only TWAP_DRIVER alerts.",
   ].join("\n");
 }
 
-function statusText(user) {
+function signalDescriptionText() {
+  return [
+    "TWAP_DRIVER signal",
+    "",
+    "Looks for a large directed 24h TWAP flow before price has already moved.",
+    "",
+    "Rules:",
+    "q1 = next1h / price",
+    "q24 = next24h / price",
+    "abs(Δq24 60m) > 80,000 HYPE",
+    "q1 and q24 aligned with direction",
+    "price not chased: 5m < 10bp, 60m < 80bp",
+    "mono24 >= 0.65",
+    "premium not overheated",
+    "",
+    `Plan: SL ${DRIVER_STOP_BP}bp / TP ${DRIVER_TAKE_PROFIT_BP}bp / max hold ${DRIVER_MAX_HOLD_MINUTES}m`,
+  ].join("\n");
+}
+
+function statusText(user, stats = createSignalStats()) {
   if (!user) {
-    return "Use /start to enable alerts.";
+    return "Use /start to enable TWAP_DRIVER alerts.";
   }
   return [
     user.enabled ? "Alerts enabled" : "Alerts disabled",
-    `Threshold: ${formatMoney(user.threshold)}$`,
-    `Window: ${user.windowSeconds}s`,
+    "Signal: TWAP_DRIVER",
+    `Plan: SL ${DRIVER_STOP_BP}bp / TP ${DRIVER_TAKE_PROFIT_BP}bp / max hold ${DRIVER_MAX_HOLD_MINUTES}m`,
+    "",
+    `Signals: ${stats.total}`,
+    `Open: ${stats.open}`,
+    `TP: ${stats.tp}`,
+    `SL: ${stats.sl}`,
+    `TIME: ${stats.time}`,
+    `Net taker: ${formatBp(stats.netTakerBp)}`,
+    `Net maker: ${formatBp(stats.netMakerBp)}`,
   ].join("\n");
 }
 
-function parsePositiveNumber(value) {
-  const number = Number(String(value ?? "").replace(/,/g, ""));
-  return Number.isFinite(number) && number > 0 ? number : null;
+function createSignalStats() {
+  return {
+    total: 0,
+    open: 0,
+    tp: 0,
+    sl: 0,
+    time: 0,
+    netTakerBp: 0,
+    netMakerBp: 0,
+  };
 }
 
 function formatMoney(value) {
@@ -296,7 +373,145 @@ function formatMoney(value) {
   }).format(value);
 }
 
-function formatSigned(value) {
+function formatSignedHype(value) {
   const prefix = value >= 0 ? "+" : "";
-  return `${prefix}${formatMoney(value)}`;
+  return `${prefix}${formatMoney(value)} HYPE`;
+}
+
+function formatBp(value) {
+  const prefix = value >= 0 ? "+" : "";
+  return `${prefix}${new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(value)}bp`;
+}
+
+function sampleFromSnapshot(snapshot) {
+  const t = Number(snapshot.timestamp) || Date.now();
+  const price = Number(snapshot.price);
+  const next1h = Number(snapshot.pressure?.next1h);
+  const next24h = Number(snapshot.pressure?.next24h);
+  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(next1h) || !Number.isFinite(next24h)) {
+    return null;
+  }
+  return {
+    t,
+    price,
+    q1: next1h / price,
+    q24: next24h / price,
+    premium: Number(snapshot.perp?.premium),
+  };
+}
+
+function sampleFromHistoryPoint(point) {
+  const t = Number(point?.t);
+  const price = Number(point?.price);
+  const next1h = Number(point?.next1h);
+  const next24h = Number(point?.next24h);
+  if (!Number.isFinite(t) || !Number.isFinite(price) || price <= 0 || !Number.isFinite(next1h) || !Number.isFinite(next24h)) {
+    return null;
+  }
+  return {
+    t,
+    price,
+    q1: next1h / price,
+    q24: next24h / price,
+    premium: Number(point?.premium),
+  };
+}
+
+function detectTwapDriverSignal(samples, current) {
+  const previous60m = sampleAtOrBefore(samples, current.t - DRIVER_LOOKBACK_MS);
+  const previous5m = sampleAtOrBefore(samples, current.t - DRIVER_PRICE_SHORT_LOOKBACK_MS);
+  if (!previous60m || !previous5m) {
+    return null;
+  }
+
+  const dq24 = current.q24 - previous60m.q24;
+  if (!Number.isFinite(dq24) || Math.abs(dq24) <= DRIVER_Q24_THRESHOLD_HYPE) {
+    return null;
+  }
+
+  const side = Math.sign(dq24);
+  if (side * current.q1 <= 0 || side * current.q24 <= 0) {
+    return null;
+  }
+
+  const priceRet5mBp = priceMoveBp(previous5m.price, current.price, 1);
+  const priceRet60mBp = priceMoveBp(previous60m.price, current.price, 1);
+  if (side * priceRet5mBp >= DRIVER_MAX_PRICE_5M_BP || side * priceRet60mBp >= DRIVER_MAX_PRICE_60M_BP) {
+    return null;
+  }
+
+  const mono24 = monotonicity(samples, previous60m.t, current.t, current.q24 - previous60m.q24);
+  if (!Number.isFinite(mono24) || mono24 < DRIVER_MIN_MONO) {
+    return null;
+  }
+
+  const premiumBp = Number.isFinite(current.premium) ? current.premium * 10_000 : null;
+  if (premiumBp !== null && side * premiumBp >= DRIVER_MAX_PREMIUM_BP) {
+    return null;
+  }
+
+  return {
+    side,
+    sideLabel: side > 0 ? "LONG" : "SHORT",
+    dq24,
+    q1: current.q1,
+    q24: current.q24,
+    mono24,
+    priceRet5mBp,
+    priceRet60mBp,
+    premiumBp,
+  };
+}
+
+function sampleAtOrBefore(samples, timestamp) {
+  for (let index = samples.length - 1; index >= 0; index -= 1) {
+    if (samples[index].t <= timestamp) {
+      return samples[index];
+    }
+  }
+  return null;
+}
+
+function priceMoveBp(entryPrice, currentPrice, side) {
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(currentPrice)) {
+    return NaN;
+  }
+  return side * (currentPrice / entryPrice - 1) * 10_000;
+}
+
+function monotonicity(samples, fromT, toT, netChange) {
+  let previous = null;
+  let gross = 0;
+  for (const sample of samples) {
+    if (sample.t < fromT || sample.t > toT) {
+      continue;
+    }
+    if (previous) {
+      gross += Math.abs(sample.q24 - previous.q24);
+    }
+    previous = sample;
+  }
+  if (!gross) {
+    return NaN;
+  }
+  return Math.abs(netChange) / gross;
+}
+
+function formatTwapDriverAlert(signal) {
+  const premiumLine = signal.premiumBp === null ? "premium: n/a" : `premium: ${formatBp(signal.premiumBp)}`;
+  return [
+    `TWAP_DRIVER ${signal.sideLabel}`,
+    "",
+    `Δq24 60m: ${formatSignedHype(signal.dq24)}`,
+    `q1: ${formatSignedHype(signal.q1)}`,
+    `q24: ${formatSignedHype(signal.q24)}`,
+    `mono24: ${signal.mono24.toFixed(2)}`,
+    `price 5m: ${formatBp(signal.priceRet5mBp)}`,
+    `price 60m: ${formatBp(signal.priceRet60mBp)}`,
+    premiumLine,
+    "",
+    `Plan: SL ${DRIVER_STOP_BP}bp / TP ${DRIVER_TAKE_PROFIT_BP}bp / max hold ${DRIVER_MAX_HOLD_MINUTES}m`,
+  ].join("\n");
 }

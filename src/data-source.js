@@ -93,6 +93,7 @@ export class LiveDataService {
 
     try {
       this.history = this.historyStore.load({ now, maxHistoryHours: this.maxHistoryHours });
+      this.notifier?.seedHistory?.(this.history);
     } catch (error) {
       console.error("History load failed:", error.message);
     }

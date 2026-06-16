@@ -4,7 +4,7 @@ import test from "node:test";
 import { BotStore } from "../src/bot-store.js";
 import { TelegramAlertBot } from "../src/telegram-alert-bot.js";
 
-test("TelegramAlertBot stores users and updates settings from commands", async () => {
+test("TelegramAlertBot stores users and controls TWAP_DRIVER subscriptions", async () => {
   const store = new BotStore(":memory:");
   const messages = [];
   const bot = new TelegramAlertBot({
@@ -14,43 +14,68 @@ test("TelegramAlertBot stores users and updates settings from commands", async (
   });
 
   await bot.handleUpdate(messageUpdate("/start", { id: 10, username: "eva", first_name: "Eva" }));
-  await bot.handleUpdate(messageUpdate("/set 750000", { id: 10, username: "eva", first_name: "Eva" }));
-  await bot.handleUpdate(messageUpdate("/window 15", { id: 10, username: "eva", first_name: "Eva" }));
+  await bot.handleUpdate(messageUpdate("/status", { id: 10, username: "eva", first_name: "Eva" }));
+  await bot.handleUpdate(messageUpdate("/signal", { id: 10, username: "eva", first_name: "Eva" }));
 
   const user = store.getUser(10);
   assert.equal(user.enabled, true);
-  assert.equal(user.threshold, 750_000);
-  assert.equal(user.windowSeconds, 15);
-  assert.match(messages.at(-1).text, /15s/);
+  assert.match(messages[0].text, /TWAP_DRIVER/);
+  assert.match(messages[1].text, /Alerts enabled/);
+  assert.match(messages[2].text, /80,000 HYPE/);
 
   await bot.handleUpdate(messageUpdate("/stop", { id: 10, username: "eva", first_name: "Eva" }));
   assert.equal(store.getUser(10).enabled, false);
 });
 
-test("TelegramAlertBot sends threshold alerts using per-user window and cooldown", async () => {
+test("TelegramAlertBot sends only TWAP_DRIVER alerts", async () => {
   const store = new BotStore(":memory:");
   store.upsertUser({ chatId: 10, username: "eva", now: 1_000 });
-  store.setThreshold(10, 500, 1_000);
-  store.setWindowSeconds(10, 5, 1_000);
 
   const messages = [];
   const bot = new TelegramAlertBot({
     botToken: "token",
     store,
-    cooldownMs: 60_000,
+    cooldownMs: 30 * 60 * 1_000,
     fetchFn: fakeTelegramFetch(messages),
   });
 
-  await bot.handleSnapshot(snapshotAt(1_000, 1_000));
-  await bot.handleSnapshot(snapshotAt(6_000, 1_600));
-  await bot.handleSnapshot(snapshotAt(7_000, 2_200));
+  await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(6_000, { price: 100, q1: 25_000, q24: 10_100 }));
+  assert.equal(messages.length, 0);
+
+  await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 20_000, q24: 30_000 }));
+  await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 100, q1: 25_000, q24: 95_000, premium: 0 }));
 
   assert.equal(messages.length, 1);
   assert.equal(messages[0].chat_id, 10);
-  assert.match(messages[0].text, /TWAP 1h/);
-  assert.match(messages[0].text, /\+600\$/);
-  assert.match(messages[0].text, /5s/);
-  assert.equal(store.getUser(10).lastAlertAt, 6_000);
+  assert.match(messages[0].text, /TWAP_DRIVER LONG/);
+  assert.match(messages[0].text, /Δq24 60m: \+85,000 HYPE/);
+  assert.match(messages[0].text, /SL 20bp \/ TP 126bp \/ max hold 45m/);
+  assert.equal(store.getUser(10).lastAlertAt, 60 * 60_000 + 1_000);
+});
+
+test("TelegramAlertBot tracks TWAP_DRIVER execution stats", async () => {
+  const store = new BotStore(":memory:");
+  store.upsertUser({ chatId: 10, username: "eva", now: 1_000 });
+
+  const messages = [];
+  const bot = new TelegramAlertBot({
+    botToken: "token",
+    store,
+    cooldownMs: 30 * 60 * 1_000,
+    fetchFn: fakeTelegramFetch(messages),
+  });
+
+  await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 20_000, q24: 30_000 }));
+  await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 100, q1: 25_000, q24: 95_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(61 * 60_000 + 1_000, { price: 101.3, q1: 25_000, q24: 95_000, premium: 0 }));
+
+  await bot.handleUpdate(messageUpdate("/status", { id: 10, username: "eva", first_name: "Eva" }));
+
+  assert.match(messages.at(-1).text, /Signals: 1/);
+  assert.match(messages.at(-1).text, /TP: 1/);
+  assert.match(messages.at(-1).text, /Net taker: \+117bp/);
 });
 
 test("TelegramAlertBot aborts in-flight polling when stopped", async () => {
@@ -100,13 +125,16 @@ function messageUpdate(text, from) {
   };
 }
 
-function snapshotAt(timestamp, next1h) {
+function snapshotAt(timestamp, { price = 100, q1 = 0, q24 = 0, premium = 0 } = {}) {
   return {
     timestamp,
-    price: 55,
+    price,
     pressure: {
-      next1h,
-      next24h: next1h * 2,
+      next1h: q1 * price,
+      next24h: q24 * price,
+    },
+    perp: {
+      premium,
     },
   };
 }
