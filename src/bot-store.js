@@ -23,6 +23,21 @@ export class BotStore {
         updated_at INTEGER NOT NULL
       )
     `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS telegram_signal_events (
+        id TEXT PRIMARY KEY,
+        opened_at INTEGER NOT NULL,
+        side INTEGER NOT NULL,
+        entry_price REAL NOT NULL,
+        expires_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'OPEN',
+        move_bp REAL,
+        net_taker_bp REAL,
+        net_maker_bp REAL,
+        closed_at INTEGER,
+        updated_at INTEGER NOT NULL
+      )
+    `);
   }
 
   upsertUser({ chatId, username = "", firstName = "", now = Date.now() }) {
@@ -99,6 +114,84 @@ export class BotStore {
       .prepare("UPDATE telegram_users SET enabled = 0, updated_at = ? WHERE chat_id = ?")
       .run(now, chatId);
   }
+
+  recordSignalOpened({ id, openedAt, side, entryPrice, expiresAt }) {
+    this.db
+      .prepare(`
+        INSERT OR IGNORE INTO telegram_signal_events (
+          id,
+          opened_at,
+          side,
+          entry_price,
+          expires_at,
+          status,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, 'OPEN', ?)
+      `)
+      .run(id, Number(openedAt), Number(side), Number(entryPrice), Number(expiresAt), Number(openedAt));
+  }
+
+  recordSignalClosed({ id, outcome, moveBp, netTakerBp, netMakerBp, closedAt }) {
+    this.db
+      .prepare(`
+        UPDATE telegram_signal_events
+        SET
+          status = ?,
+          move_bp = ?,
+          net_taker_bp = ?,
+          net_maker_bp = ?,
+          closed_at = ?,
+          updated_at = ?
+        WHERE id = ? AND status = 'OPEN'
+      `)
+      .run(
+        String(outcome).toUpperCase(),
+        Number(moveBp),
+        Number(netTakerBp),
+        Number(netMakerBp),
+        Number(closedAt),
+        Number(closedAt),
+        id,
+      );
+  }
+
+  listOpenSignals() {
+    return this.db
+      .prepare(`
+        SELECT *
+        FROM telegram_signal_events
+        WHERE status = 'OPEN'
+        ORDER BY opened_at
+      `)
+      .all()
+      .map(mapSignalEvent);
+  }
+
+  signalStats() {
+    const row = this.db
+      .prepare(`
+        SELECT
+          COUNT(*) AS total,
+          SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS open,
+          SUM(CASE WHEN status = 'TP' THEN 1 ELSE 0 END) AS tp,
+          SUM(CASE WHEN status = 'SL' THEN 1 ELSE 0 END) AS sl,
+          SUM(CASE WHEN status = 'TIME' THEN 1 ELSE 0 END) AS time,
+          SUM(COALESCE(net_taker_bp, 0)) AS net_taker_bp,
+          SUM(COALESCE(net_maker_bp, 0)) AS net_maker_bp
+        FROM telegram_signal_events
+      `)
+      .get();
+    return {
+      total: Number(row?.total) || 0,
+      open: Number(row?.open) || 0,
+      tp: Number(row?.tp) || 0,
+      sl: Number(row?.sl) || 0,
+      time: Number(row?.time) || 0,
+      netTakerBp: Number(row?.net_taker_bp) || 0,
+      netMakerBp: Number(row?.net_maker_bp) || 0,
+    };
+  }
 }
 
 function mapUser(row) {
@@ -112,5 +205,15 @@ function mapUser(row) {
     lastAlertAt: Number(row.last_alert_at),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+  };
+}
+
+function mapSignalEvent(row) {
+  return {
+    id: row.id,
+    openedAt: Number(row.opened_at),
+    side: Number(row.side),
+    entryPrice: Number(row.entry_price),
+    expiresAt: Number(row.expires_at),
   };
 }

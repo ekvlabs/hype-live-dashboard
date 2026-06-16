@@ -5,6 +5,7 @@ import { BotStore } from "./bot-store.js";
 
 const DEFAULT_COOLDOWN_MS = 30 * 60 * 1_000;
 const DEFAULT_DB_PATH = join(fileURLToPath(new URL("..", import.meta.url)), "data", "bot.sqlite");
+const DEFAULT_DASHBOARD_URL = "https://ekvlabs.github.io/hype-live-dashboard/";
 const DRIVER_Q24_THRESHOLD_HYPE = 80_000;
 const DRIVER_LOOKBACK_MS = 60 * 60 * 1_000;
 const DRIVER_PRICE_SHORT_LOOKBACK_MS = 5 * 60 * 1_000;
@@ -24,16 +25,17 @@ export class TelegramAlertBot {
     fetchFn = globalThis.fetch,
     cooldownMs = DEFAULT_COOLDOWN_MS,
     pollTimeoutSeconds = 25,
+    dashboardUrl = DEFAULT_DASHBOARD_URL,
   } = {}) {
     this.botToken = botToken || "";
     this.store = store;
     this.fetchFn = fetchFn;
     this.cooldownMs = Number(cooldownMs) || DEFAULT_COOLDOWN_MS;
     this.pollTimeoutSeconds = pollTimeoutSeconds;
+    this.dashboardUrl = dashboardUrl || DEFAULT_DASHBOARD_URL;
     this.offset = 0;
     this.samples = [];
-    this.signalStats = createSignalStats();
-    this.openSignals = [];
+    this.openSignals = this.store?.listOpenSignals?.() ?? [];
     this.pollTimer = null;
     this.polling = false;
     this.pollAbortController = null;
@@ -48,6 +50,7 @@ export class TelegramAlertBot {
       botToken: env.TELEGRAM_BOT_TOKEN,
       store: new BotStore(env.TELEGRAM_BOT_DB || DEFAULT_DB_PATH),
       cooldownMs: env.TELEGRAM_ALERT_COOLDOWN_MS,
+      dashboardUrl: env.TELEGRAM_DASHBOARD_URL || DEFAULT_DASHBOARD_URL,
     });
   }
 
@@ -64,6 +67,10 @@ export class TelegramAlertBot {
       };
     }
     return this.store.stats();
+  }
+
+  getSignalStats() {
+    return this.store?.signalStats?.() ?? createSignalStats();
   }
 
   seedHistory(history = []) {
@@ -162,7 +169,7 @@ export class TelegramAlertBot {
         firstName: from.first_name ?? "",
         now,
       });
-      await this.sendMessage(chatId, helpText());
+      await this.sendMessage(chatId, helpText(this.dashboardUrl));
       return true;
     }
 
@@ -176,12 +183,12 @@ export class TelegramAlertBot {
     }
 
     if (text === "/signal") {
-      await this.sendMessage(chatId, signalDescriptionText());
+      await this.sendMessage(chatId, signalDescriptionText(this.dashboardUrl));
       return true;
     }
 
     if (text === "/status") {
-      await this.sendMessage(chatId, statusText(this.store.getUser(chatId), this.signalStats));
+      await this.sendMessage(chatId, statusText(this.store.getUser(chatId), this.getSignalStats(), this.dashboardUrl));
       return true;
     }
 
@@ -196,7 +203,7 @@ export class TelegramAlertBot {
       return true;
     }
 
-    await this.sendMessage(chatId, helpText());
+    await this.sendMessage(chatId, helpText(this.dashboardUrl));
     return true;
   }
 
@@ -224,7 +231,7 @@ export class TelegramAlertBot {
       if (user.lastAlertAt > 0 && sample.t - user.lastAlertAt < this.cooldownMs) {
         continue;
       }
-      await this.sendMessage(user.chatId, formatTwapDriverAlert(signal));
+      await this.sendMessage(user.chatId, formatTwapDriverAlert(signal, this.dashboardUrl));
       this.store.markAlertSent(user.chatId, sample.t);
       sent = true;
     }
@@ -259,8 +266,7 @@ export class TelegramAlertBot {
       expiresAt: sample.t + DRIVER_MAX_HOLD_MINUTES * 60_000,
     };
     this.openSignals.push(tracked);
-    this.signalStats.total += 1;
-    this.signalStats.open += 1;
+    this.store?.recordSignalOpened?.(tracked);
   }
 
   updateSignalOutcomes(sample) {
@@ -282,10 +288,14 @@ export class TelegramAlertBot {
 
   closeTrackedSignal(signal, outcome, moveBp, closedAt) {
     signal.closedAt = closedAt;
-    this.signalStats.open = Math.max(0, this.signalStats.open - 1);
-    this.signalStats[outcome.toLowerCase()] += 1;
-    this.signalStats.netTakerBp += moveBp - 9;
-    this.signalStats.netMakerBp += moveBp - 3;
+    this.store?.recordSignalClosed?.({
+      id: signal.id,
+      outcome,
+      moveBp,
+      netTakerBp: moveBp - 9,
+      netMakerBp: moveBp - 3,
+      closedAt,
+    });
   }
 
   async sendMessage(chatId, text) {
@@ -309,7 +319,7 @@ export class TelegramAlertBot {
   }
 }
 
-function helpText() {
+function helpText(dashboardUrl = DEFAULT_DASHBOARD_URL) {
   return [
     "HYPE TWAP_DRIVER Alert Bot",
     "Commands:",
@@ -319,10 +329,11 @@ function helpText() {
     "/signal - signal description",
     "",
     "The bot sends only TWAP_DRIVER alerts.",
+    `Dashboard: ${dashboardUrl}`,
   ].join("\n");
 }
 
-function signalDescriptionText() {
+function signalDescriptionText(dashboardUrl = DEFAULT_DASHBOARD_URL) {
   return [
     "TWAP_DRIVER signal",
     "",
@@ -338,10 +349,11 @@ function signalDescriptionText() {
     "premium not overheated",
     "",
     `Plan: SL ${DRIVER_STOP_BP}bp / TP ${DRIVER_TAKE_PROFIT_BP}bp / max hold ${DRIVER_MAX_HOLD_MINUTES}m`,
+    `Dashboard: ${dashboardUrl}`,
   ].join("\n");
 }
 
-function statusText(user, stats = createSignalStats()) {
+function statusText(user, stats = createSignalStats(), dashboardUrl = DEFAULT_DASHBOARD_URL) {
   if (!user) {
     return "Use /start to enable TWAP_DRIVER alerts.";
   }
@@ -357,6 +369,7 @@ function statusText(user, stats = createSignalStats()) {
     `TIME: ${stats.time}`,
     `Net taker: ${formatBp(stats.netTakerBp)}`,
     `Net maker: ${formatBp(stats.netMakerBp)}`,
+    `Dashboard: ${dashboardUrl}`,
   ].join("\n");
 }
 
@@ -514,7 +527,7 @@ function monotonicity(samples, fromT, toT, netChange) {
   return Math.abs(netChange) / gross;
 }
 
-function formatTwapDriverAlert(signal) {
+function formatTwapDriverAlert(signal, dashboardUrl = DEFAULT_DASHBOARD_URL) {
   const premiumLine = signal.premiumBp === null ? "premium: n/a" : `premium: ${formatBp(signal.premiumBp)}`;
   return [
     `TWAP_DRIVER ${signal.sideLabel}`,
@@ -528,5 +541,6 @@ function formatTwapDriverAlert(signal) {
     premiumLine,
     "",
     `Plan: SL ${DRIVER_STOP_BP}bp / TP ${DRIVER_TAKE_PROFIT_BP}bp / max hold ${DRIVER_MAX_HOLD_MINUTES}m`,
+    `Dashboard: ${dashboardUrl}`,
   ].join("\n");
 }

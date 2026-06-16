@@ -20,8 +20,10 @@ test("TelegramAlertBot stores users and controls TWAP_DRIVER subscriptions", asy
   const user = store.getUser(10);
   assert.equal(user.enabled, true);
   assert.match(messages[0].text, /TWAP_DRIVER/);
+  assert.match(messages[0].text, /https:\/\/ekvlabs.github.io\/hype-live-dashboard\//);
   assert.match(messages[1].text, /Alerts enabled/);
   assert.match(messages[2].text, /80,000 HYPE/);
+  assert.match(messages[2].text, /https:\/\/ekvlabs.github.io\/hype-live-dashboard\//);
 
   await bot.handleUpdate(messageUpdate("/stop", { id: 10, username: "eva", first_name: "Eva" }));
   assert.equal(store.getUser(10).enabled, false);
@@ -51,6 +53,7 @@ test("TelegramAlertBot sends only TWAP_DRIVER alerts", async () => {
   assert.match(messages[0].text, /TWAP_DRIVER LONG/);
   assert.match(messages[0].text, /Δq24 60m: \+85,000 HYPE/);
   assert.match(messages[0].text, /SL 20bp \/ TP 126bp \/ max hold 45m/);
+  assert.match(messages[0].text, /https:\/\/ekvlabs.github.io\/hype-live-dashboard\//);
   assert.equal(store.getUser(10).lastAlertAt, 60 * 60_000 + 1_000);
 });
 
@@ -74,6 +77,37 @@ test("TelegramAlertBot tracks TWAP_DRIVER execution stats", async () => {
   await bot.handleUpdate(messageUpdate("/status", { id: 10, username: "eva", first_name: "Eva" }));
 
   assert.match(messages.at(-1).text, /Signals: 1/);
+  assert.match(messages.at(-1).text, /TP: 1/);
+  assert.match(messages.at(-1).text, /Net taker: \+117bp/);
+});
+
+test("TelegramAlertBot persists TWAP_DRIVER execution stats across bot restarts", async () => {
+  const store = new BotStore(":memory:");
+  store.upsertUser({ chatId: 10, username: "eva", now: 1_000 });
+
+  const messages = [];
+  const bot = new TelegramAlertBot({
+    botToken: "token",
+    store,
+    cooldownMs: 30 * 60 * 1_000,
+    fetchFn: fakeTelegramFetch(messages),
+  });
+
+  await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 20_000, q24: 30_000 }));
+  await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 100, q1: 25_000, q24: 95_000, premium: 0 }));
+
+  const restartedBot = new TelegramAlertBot({
+    botToken: "token",
+    store,
+    cooldownMs: 30 * 60 * 1_000,
+    fetchFn: fakeTelegramFetch(messages),
+  });
+  await restartedBot.handleSnapshot(snapshotAt(61 * 60_000 + 1_000, { price: 101.3, q1: 25_000, q24: 95_000, premium: 0 }));
+  await restartedBot.handleUpdate(messageUpdate("/status", { id: 10, username: "eva", first_name: "Eva" }));
+
+  assert.match(messages.at(-1).text, /Signals: 1/);
+  assert.match(messages.at(-1).text, /Open: 0/);
   assert.match(messages.at(-1).text, /TP: 1/);
   assert.match(messages.at(-1).text, /Net taker: \+117bp/);
 });

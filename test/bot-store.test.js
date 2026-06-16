@@ -51,3 +51,54 @@ test("BotStore reports aggregate user counts", () => {
     disabledUsers: 1,
   });
 });
+
+test("BotStore persists TWAP_DRIVER signal events and stats", () => {
+  const store = new BotStore(":memory:");
+
+  store.recordSignalOpened({
+    id: "sig-1",
+    openedAt: 1_000,
+    side: 1,
+    entryPrice: 100,
+    expiresAt: 2_000,
+  });
+
+  assert.deepEqual(store.signalStats(), {
+    total: 1,
+    open: 1,
+    tp: 0,
+    sl: 0,
+    time: 0,
+    netTakerBp: 0,
+    netMakerBp: 0,
+  });
+  assert.deepEqual(store.listOpenSignals(), [
+    {
+      id: "sig-1",
+      openedAt: 1_000,
+      side: 1,
+      entryPrice: 100,
+      expiresAt: 2_000,
+    },
+  ]);
+
+  store.recordSignalClosed({
+    id: "sig-1",
+    outcome: "TP",
+    moveBp: 126,
+    netTakerBp: 117,
+    netMakerBp: 123,
+    closedAt: 1_500,
+  });
+
+  assert.deepEqual(store.signalStats(), {
+    total: 1,
+    open: 0,
+    tp: 1,
+    sl: 0,
+    time: 0,
+    netTakerBp: 117,
+    netMakerBp: 123,
+  });
+  assert.deepEqual(store.listOpenSignals(), []);
+});
