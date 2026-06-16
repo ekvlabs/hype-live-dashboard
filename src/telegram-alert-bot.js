@@ -194,12 +194,15 @@ export class TelegramAlertBot {
 
     if (text === "/stop") {
       this.store.disableUser(chatId, now);
-      await this.sendMessage(chatId, "TWAP_DRIVER alerts disabled. Use /start to enable again.");
+      await this.sendMessage(chatId, `TWAP_DRIVER alerts disabled. Use /start to enable again.\nDashboard: ${this.dashboardUrl}`);
       return true;
     }
 
     if (text.startsWith("/set") || text.startsWith("/window")) {
-      await this.sendMessage(chatId, "Custom threshold/window alerts are disabled. Use /signal for TWAP_DRIVER rules.");
+      await this.sendMessage(
+        chatId,
+        `Custom threshold/window alerts are disabled. Use /signal for TWAP_DRIVER rules.\nDashboard: ${this.dashboardUrl}`,
+      );
       return true;
     }
 

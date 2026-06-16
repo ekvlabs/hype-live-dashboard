@@ -27,6 +27,10 @@ test("TelegramAlertBot stores users and controls TWAP_DRIVER subscriptions", asy
 
   await bot.handleUpdate(messageUpdate("/stop", { id: 10, username: "eva", first_name: "Eva" }));
   assert.equal(store.getUser(10).enabled, false);
+  assert.match(messages.at(-1).text, /https:\/\/ekvlabs.github.io\/hype-live-dashboard\//);
+
+  await bot.handleUpdate(messageUpdate("/set 100000", { id: 10, username: "eva", first_name: "Eva" }));
+  assert.match(messages.at(-1).text, /https:\/\/ekvlabs.github.io\/hype-live-dashboard\//);
 });
 
 test("TelegramAlertBot sends only TWAP_DRIVER alerts", async () => {
