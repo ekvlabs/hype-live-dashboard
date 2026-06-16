@@ -3,8 +3,8 @@ import test from "node:test";
 
 import { historyPointLimit, trimHistory } from "../src/history.js";
 
-test("historyPointLimit keeps 7 days at the one second polling interval", () => {
-  assert.equal(historyPointLimit(1_000, 168), 604_800);
+test("historyPointLimit keeps 14 days at the one second polling interval", () => {
+  assert.equal(historyPointLimit(1_000, 336), 1_209_600);
 });
 
 test("trimHistory keeps only the selected rolling time window", () => {

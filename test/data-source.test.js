@@ -67,11 +67,11 @@ test("LiveDataService samples TWAP, price, and Hyperliquid perp values into hist
   ]);
 });
 
-test("LiveDataService keeps one week of one-second history by default", () => {
+test("LiveDataService keeps two weeks of one-second history by default", () => {
   const service = new LiveDataService({ intervalMs: 1_000 });
 
-  assert.equal(service.getState().config.maxHistoryHours, 168);
-  assert.equal(service.getState().config.historyLimit, 604_800);
+  assert.equal(service.getState().config.maxHistoryHours, 336);
+  assert.equal(service.getState().config.historyLimit, 1_209_600);
 });
 
 test("LiveDataService seeds notifier with stored history", () => {

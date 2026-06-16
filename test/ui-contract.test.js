@@ -12,6 +12,7 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(html, /data-range="24"/);
   assert.match(html, /data-range="72"/);
   assert.match(html, /data-range="168"/);
+  assert.match(html, /data-range="336"/);
   assert.match(html, /data-resolution="1s"/);
   assert.match(html, /data-resolution="5s"/);
   assert.match(html, /data-resolution="1m"/);
@@ -79,7 +80,7 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /autoScaleVertical/);
   assert.match(app, /setAutoScale\(true\)/);
   assert.match(app, /appendHistoryPoint/);
-  assert.match(app, /604_800/);
+  assert.match(app, /1_209_600/);
   assert.doesNotMatch(app, /new EventSource/);
   assert.doesNotMatch(app, /zeroSeries/);
   assert.doesNotMatch(html, /Buy total|Sell total|>BUY<|>SELL<|buyCount|sellCount/);

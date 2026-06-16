@@ -65,3 +65,24 @@ test("HistoryStore preserves optional Hyperliquid perp fields without dropping l
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("HistoryStore default load keeps two weeks", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hype-history-default-"));
+  try {
+    const filePath = join(dir, "history.ndjson");
+    const store = new HistoryStore(filePath);
+    const hour = 60 * 60_000;
+    const now = 20 * 24 * hour;
+
+    store.append({ t: now - 15 * 24 * hour, price: 49, next1h: 1, next24h: 2 });
+    store.append({ t: now - 14 * 24 * hour, price: 50, next1h: 3, next24h: 4 });
+    store.append({ t: now, price: 51, next1h: 5, next24h: 6 });
+
+    assert.deepEqual(
+      store.load({ now }).map((point) => point.price),
+      [50, 51],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

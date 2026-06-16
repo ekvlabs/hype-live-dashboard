@@ -12,7 +12,7 @@ export class LiveDataService {
   constructor({
     fetchFn = globalThis.fetch,
     intervalMs = 1_000,
-    maxHistoryHours = 168,
+    maxHistoryHours = 336,
     historyCompactMs = 10 * 60 * 1000,
     historyStore = null,
     notifier = null,

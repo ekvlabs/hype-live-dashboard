@@ -8,7 +8,7 @@ export class HistoryStore {
     this.filePath = filePath;
   }
 
-  load({ now = Date.now(), maxHistoryHours = 168 } = {}) {
+  load({ now = Date.now(), maxHistoryHours = 336 } = {}) {
     if (!this.filePath || !existsSync(this.filePath)) {
       return [];
     }

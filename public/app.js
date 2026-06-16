@@ -553,8 +553,8 @@ function appendHistoryPoint(point, statePatch = {}) {
   const visibleRange = chartEntries[0]?.chart.timeScale().getVisibleRange() ?? null;
   const followLive = shouldKeepLiveFollowing(isLiveFollowing, visibleRange, previousLastTime);
   const config = previous.config ?? {};
-  const maxHistoryHours = Number(config.maxHistoryHours) || 168;
-  const historyLimit = Number(config.historyLimit) || 604_800;
+  const maxHistoryHours = Number(config.maxHistoryHours) || 336;
+  const historyLimit = Number(config.historyLimit) || 1_209_600;
   const cutoff = Number(point.t) - maxHistoryHours * 60 * 60 * 1000;
   const history = [...(previous.history ?? []), point]
     .filter((item) => Number(item.t) >= cutoff)
