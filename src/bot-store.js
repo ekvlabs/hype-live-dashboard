@@ -450,6 +450,12 @@ function mapPublicSignalEvent(row) {
     mfeBp: Number(row.mfe_bp) || 0,
     maeBp: Number(row.mae_bp) || 0,
     phase: row.phase || "ACTIVE",
+    tp1HitAt: Number(row.tp1_hit_at) || 0,
+    breakevenHitAt: Number(row.breakeven_hit_at) || 0,
+    runnerStartedAt: Number(row.runner_started_at) || 0,
+    weakNotifiedAt: Number(row.weak_notified_at) || 0,
+    fadeNotifiedAt: Number(row.fade_notified_at) || 0,
+    trailStopBp: nullableNumber(row.trail_stop_bp),
     exitReason: row.exit_reason || "",
   };
 }

@@ -73,7 +73,17 @@ test("TWAP_DRIVER regime bars and markers align to the shared time axis", () => 
   assert.deepEqual(
     driverEventsToMarkers([
       { id: "a", openedAt: 10_000, side: "LONG", status: "OPEN" },
-      { id: "b", openedAt: 15_000, side: "SHORT", status: "TP", closedAt: 20_000 },
+      {
+        id: "b",
+        openedAt: 15_000,
+        side: "SHORT",
+        status: "TP",
+        phase: "FINAL_EXIT",
+        tp1HitAt: 17_000,
+        fadeNotifiedAt: 18_000,
+        closedAt: 20_000,
+        exitReason: "FADE_TIMEOUT",
+      },
     ]),
     [
       {
@@ -91,11 +101,25 @@ test("TWAP_DRIVER regime bars and markers align to the shared time axis", () => 
         text: "ENTRY S",
       },
       {
+        time: 17,
+        position: "belowBar",
+        color: "#45d3c3",
+        shape: "circle",
+        text: "TP1",
+      },
+      {
+        time: 18,
+        position: "aboveBar",
+        color: "#f5b84b",
+        shape: "circle",
+        text: "FADE",
+      },
+      {
         time: 20,
         position: "belowBar",
         color: "#45d3c3",
         shape: "circle",
-        text: "TP",
+        text: "EXIT",
       },
     ],
   );
@@ -103,7 +127,7 @@ test("TWAP_DRIVER regime bars and markers align to the shared time axis", () => 
   assert.deepEqual(
     driverEventsToCompactMarkers([
       { id: "a", openedAt: 10_000, side: "LONG", status: "OPEN" },
-      { id: "b", openedAt: 15_000, side: "SHORT", status: "SL", closedAt: 20_000 },
+      { id: "b", openedAt: 15_000, side: "SHORT", status: "SL", phase: "FINAL_EXIT", tp1HitAt: 17_000, closedAt: 20_000 },
     ]),
     [
       {
@@ -117,6 +141,12 @@ test("TWAP_DRIVER regime bars and markers align to the shared time axis", () => 
         position: "aboveBar",
         color: "#e34b4b",
         shape: "arrowDown",
+      },
+      {
+        time: 17,
+        position: "belowBar",
+        color: "#45d3c3",
+        shape: "circle",
       },
       {
         time: 20,

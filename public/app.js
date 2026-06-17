@@ -12,7 +12,7 @@ import {
   shouldKeepLiveFollowing,
   upsertAlignedLineDataPoint,
   upsertAlignedPriceBarData,
-} from "./chart-data.js?v=20";
+} from "./chart-data.js?v=21";
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;

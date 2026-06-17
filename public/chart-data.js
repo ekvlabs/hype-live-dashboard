@@ -10,6 +10,7 @@ export const NEGATIVE_TWAP_COLOR = "#e34b4b";
 export const DRIVER_LONG_COLOR = "#10b437";
 export const DRIVER_SHORT_COLOR = "#e34b4b";
 export const DRIVER_EXIT_COLOR = "#45d3c3";
+export const DRIVER_FADE_COLOR = "#f5b84b";
 export const DRIVER_NEUTRAL_COLOR = "rgba(69, 211, 195, 0.18)";
 export const DEFAULT_MIN_BAR_SPACING = 0.5;
 export const ABSOLUTE_MIN_BAR_SPACING = 0.02;
@@ -139,16 +140,41 @@ export function driverEventsToMarkers(events) {
       });
     }
 
+    const tp1Time = toUnixSeconds(event?.tp1HitAt);
+    if (Number.isFinite(tp1Time) && tp1Time > 0 && !seen.has(`${event.id}:tp1`)) {
+      seen.add(`${event.id}:tp1`);
+      markers.push({
+        time: tp1Time,
+        position: "belowBar",
+        color: DRIVER_EXIT_COLOR,
+        shape: "circle",
+        text: "TP1",
+      });
+    }
+
+    const fadeTime = toUnixSeconds(event?.fadeNotifiedAt);
+    if (Number.isFinite(fadeTime) && fadeTime > 0 && !seen.has(`${event.id}:fade`)) {
+      seen.add(`${event.id}:fade`);
+      markers.push({
+        time: fadeTime,
+        position: "aboveBar",
+        color: DRIVER_FADE_COLOR,
+        shape: "circle",
+        text: "FADE",
+      });
+    }
+
     const status = String(event?.status ?? "").toUpperCase();
     const closedTime = toUnixSeconds(event?.closedAt);
     if (Number.isFinite(closedTime) && status && status !== "OPEN" && !seen.has(`${event.id}:close`)) {
       seen.add(`${event.id}:close`);
+      const isNegativeExit = status === "SL" || status === "OPPOSITE" || (status === "TIME" && Number(event?.moveBp) < 0);
       markers.push({
         time: closedTime,
-        position: status === "SL" ? "aboveBar" : "belowBar",
-        color: status === "SL" ? DRIVER_SHORT_COLOR : DRIVER_EXIT_COLOR,
+        position: isNegativeExit ? "aboveBar" : "belowBar",
+        color: isNegativeExit ? DRIVER_SHORT_COLOR : DRIVER_EXIT_COLOR,
         shape: "circle",
-        text: status,
+        text: "EXIT",
       });
     }
   }
