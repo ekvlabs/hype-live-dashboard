@@ -1,6 +1,6 @@
 import {
   RESOLUTIONS,
-  driverEventsToMarkers,
+  driverEventsToCompactMarkers,
   historyToAlignedLineData,
   historyToAlignedPriceBars,
   historyToAlignedRegimeBars,
@@ -14,7 +14,7 @@ import {
   upsertAlignedLineDataPoint,
   upsertAlignedPriceBarData,
   upsertAlignedRegimeBarData,
-} from "./chart-data.js?v=19";
+} from "./chart-data.js?v=20";
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;
@@ -723,15 +723,16 @@ function upsertChartDataForEntry(entry, point) {
 }
 
 function setDriverMarkers(events) {
-  const markers = driverEventsToMarkers(events).map((marker) => ({
+  const markers = driverEventsToCompactMarkers(events).map((marker) => ({
     ...marker,
     time: alignTimeToResolution(marker.time),
   }));
   for (const entry of chartEntries) {
+    const entryMarkers = entry.id === "driver" ? markers : [];
     if (entry.markers?.setMarkers) {
-      entry.markers.setMarkers(markers);
+      entry.markers.setMarkers(entryMarkers);
     } else if (typeof entry.series.setMarkers === "function") {
-      entry.series.setMarkers(markers);
+      entry.series.setMarkers(entryMarkers);
     }
   }
 }

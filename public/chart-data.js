@@ -155,6 +155,10 @@ export function driverEventsToMarkers(events) {
   return markers.sort((a, b) => Number(a.time) - Number(b.time));
 }
 
+export function driverEventsToCompactMarkers(events) {
+  return driverEventsToMarkers(events).map(({ text: _text, ...marker }) => marker);
+}
+
 export function visibleDataRange(data, timeRange = null) {
   let min = Infinity;
   let max = -Infinity;

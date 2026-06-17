@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   NEGATIVE_TWAP_COLOR,
   driverEventsToMarkers,
+  driverEventsToCompactMarkers,
   historyToAlignedRegimeBars,
   historyToAlignedLineData,
   historyToAlignedPriceBars,
@@ -95,6 +96,33 @@ test("TWAP_DRIVER regime bars and markers align to the shared time axis", () => 
         color: "#45d3c3",
         shape: "circle",
         text: "TP",
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    driverEventsToCompactMarkers([
+      { id: "a", openedAt: 10_000, side: "LONG", status: "OPEN" },
+      { id: "b", openedAt: 15_000, side: "SHORT", status: "SL", closedAt: 20_000 },
+    ]),
+    [
+      {
+        time: 10,
+        position: "belowBar",
+        color: "#10b437",
+        shape: "arrowUp",
+      },
+      {
+        time: 15,
+        position: "aboveBar",
+        color: "#e34b4b",
+        shape: "arrowDown",
+      },
+      {
+        time: 20,
+        position: "aboveBar",
+        color: "#e34b4b",
+        shape: "circle",
       },
     ],
   );
