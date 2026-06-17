@@ -3,7 +3,6 @@ import {
   driverEventsToCompactMarkers,
   historyToAlignedLineData,
   historyToAlignedPriceBars,
-  historyToAlignedRegimeBars,
   minimumBarSpacingForRange,
   needsVerticalAutoscale,
   nextLiveVisibleRange,
@@ -13,7 +12,6 @@ import {
   shouldKeepLiveFollowing,
   upsertAlignedLineDataPoint,
   upsertAlignedPriceBarData,
-  upsertAlignedRegimeBarData,
 } from "./chart-data.js?v=20";
 
 const POLL_INTERVAL_MS = 1_000;
@@ -21,13 +19,11 @@ const LIVE_FETCH_TIMEOUT_MS = 3_000;
 const DEFAULT_RANGE_HOURS = 1;
 const CHART_HEIGHT = 280;
 const COMPACT_CHART_HEIGHT = 220;
-const DRIVER_CHART_HEIGHT = 76;
 const API_BASE_URL = normalizeApiBaseUrl(window.HYPE_CONFIG?.apiBaseUrl ?? window.HYPE_API_BASE_URL ?? "");
 
 const {
   BarSeries,
   CrosshairMode,
-  HistogramSeries,
   LineSeries,
   LineStyle,
   createChart,
@@ -47,18 +43,17 @@ const elements = {
   updatedAt: document.querySelector("#updatedAt"),
   marketList: document.querySelector("#marketList"),
   rangeInfo: document.querySelector("#rangeInfo"),
+  showDriverMarkers: document.querySelector("#showDriverMarkers"),
   rangeButtons: [...document.querySelectorAll(".range-btn")],
   resolutionButtons: [...document.querySelectorAll("[data-resolution]")],
   chartTwap1hValue: document.querySelector("#chartTwap1hValue"),
   chartTwap24hValue: document.querySelector("#chartTwap24hValue"),
   chartPriceValue: document.querySelector("#chartPriceValue"),
-  chartDriverValue: document.querySelector("#chartDriverValue"),
   chartFundingValue: document.querySelector("#chartFundingValue"),
   chartOpenInterestValue: document.querySelector("#chartOpenInterestValue"),
   chartPremiumValue: document.querySelector("#chartPremiumValue"),
   chartMarkOracleValue: document.querySelector("#chartMarkOracleValue"),
   priceChartTitle: document.querySelector("#priceChartTitle"),
-  driverChart: document.querySelector("#driverChart"),
   twap1hChart: document.querySelector("#twap1hChart"),
   twap24hChart: document.querySelector("#twap24hChart"),
   priceChart: document.querySelector("#priceChart"),
@@ -69,16 +64,6 @@ const elements = {
 };
 
 const chartEntries = [
-  {
-    id: "driver",
-    container: elements.driverChart,
-    key: "driverRegime",
-    color: "#10b437",
-    type: "histogram",
-    formatter: formatAxisDriver,
-    height: DRIVER_CHART_HEIGHT,
-    zeroLine: true,
-  },
   {
     id: "twap1h",
     container: elements.twap1hChart,
@@ -154,11 +139,13 @@ let isLiveFollowing = true;
 let isSyncingRange = false;
 let isSyncingCrosshair = false;
 let ignoreRangeEventsUntil = 0;
+let showDriverMarkers = Boolean(elements.showDriverMarkers?.checked);
 
 configureAlertBotLink();
 recordVisit();
 wireRangeControls();
 wireResolutionControls();
+wireDriverMarkerToggle();
 wireResize();
 wireChartSync();
 applyTimeScaleDensity();
@@ -173,15 +160,6 @@ function createChartEntry(definition) {
       upColor: "#10b437",
       downColor: "#e34b4b",
       thinBars: true,
-      priceFormat: {
-        type: "custom",
-        formatter: definition.formatter,
-      },
-    });
-  } else if (definition.type === "histogram") {
-    series = chart.addSeries(HistogramSeries, {
-      base: 0,
-      color: definition.color,
       priceFormat: {
         type: "custom",
         formatter: definition.formatter,
@@ -321,6 +299,13 @@ function wireResolutionControls() {
       render(lastState, { forceRange: true });
     });
   }
+}
+
+function wireDriverMarkerToggle() {
+  elements.showDriverMarkers?.addEventListener("change", () => {
+    showDriverMarkers = Boolean(elements.showDriverMarkers.checked);
+    setDriverMarkers(lastState?.driverEvents ?? []);
+  });
 }
 
 function wireResize() {
@@ -554,7 +539,6 @@ function render(state, options = {}) {
   setText(elements.chartTwap1hValue, formatMoney(snapshot.pressure.next1h, true));
   setText(elements.chartTwap24hValue, formatMoney(snapshot.pressure.next24h, true));
   setText(elements.chartPriceValue, formatPrice(snapshot.price));
-  setText(elements.chartDriverValue, formatDriverStatus(driverRegimeAt(Math.floor(Number(snapshot.timestamp) / 1000), lastState.driverEvents)));
   setText(elements.chartFundingValue, formatPercent(snapshot.perp?.funding));
   setText(elements.chartOpenInterestValue, formatCompact(snapshot.perp?.openInterest));
   setText(elements.chartPremiumValue, formatBps(snapshot.perp?.premium));
@@ -571,7 +555,6 @@ function render(state, options = {}) {
   setSignedClass(elements.twap24h, snapshot.pressure.next24h);
   setSignedClass(elements.chartTwap1hValue, snapshot.pressure.next1h);
   setSignedClass(elements.chartTwap24hValue, snapshot.pressure.next24h);
-  setDriverClass(elements.chartDriverValue, driverRegimeAt(Math.floor(Number(snapshot.timestamp) / 1000), lastState.driverEvents));
 
   if (options.incrementalPoint && hasAppliedInitialRange && !options.forceRange) {
     appendChartData(options.incrementalPoint);
@@ -646,7 +629,7 @@ function historyPointFromSnapshot(snapshot) {
 }
 
 function setChartData(history) {
-  const chartHistory = withDriverRegimes(selectedHistoryWindow(history, selectedHours), lastState?.driverEvents ?? []);
+  const chartHistory = selectedHistoryWindow(history, selectedHours);
   for (const entry of chartEntries) {
     const data = chartDataForEntry(entry, chartHistory);
     entry.data = data;
@@ -664,7 +647,7 @@ function setChartData(history) {
 }
 
 function appendChartData(point) {
-  const chartPoint = withDriverRegime(point, lastState?.driverEvents ?? []);
+  const chartPoint = point;
   const oldestTime = Number(point.time) - selectedHours * 60 * 60;
   const bucketTime = Math.floor(Number(chartPoint.time) / selectedResolution.seconds) * selectedResolution.seconds;
 
@@ -706,9 +689,6 @@ function chartDataForEntry(entry, history) {
   if (entry.type === "bar") {
     return historyToAlignedPriceBars(history, selectedResolution.seconds);
   }
-  if (entry.type === "histogram") {
-    return historyToAlignedRegimeBars(history, selectedResolution.seconds);
-  }
   return historyToAlignedLineData(history, entry.key, selectedResolution.seconds, entry.color);
 }
 
@@ -716,70 +696,24 @@ function upsertChartDataForEntry(entry, point) {
   if (entry.type === "bar") {
     return upsertAlignedPriceBarData(entry.data, point, selectedResolution.seconds);
   }
-  if (entry.type === "histogram") {
-    return upsertAlignedRegimeBarData(entry.data, point, selectedResolution.seconds);
-  }
   return upsertAlignedLineDataPoint(entry.data, point, entry.key, selectedResolution.seconds, entry.color);
 }
 
 function setDriverMarkers(events) {
-  const markers = driverEventsToCompactMarkers(events).map((marker) => ({
-    ...marker,
-    time: alignTimeToResolution(marker.time),
-  }));
+  const markers = showDriverMarkers
+    ? driverEventsToCompactMarkers(events).map((marker) => ({
+        ...marker,
+        time: alignTimeToResolution(marker.time),
+      }))
+    : [];
   for (const entry of chartEntries) {
-    const entryMarkers = entry.id === "driver" ? markers : [];
+    const entryMarkers = entry.id === "price" ? markers : [];
     if (entry.markers?.setMarkers) {
       entry.markers.setMarkers(entryMarkers);
     } else if (typeof entry.series.setMarkers === "function") {
       entry.series.setMarkers(entryMarkers);
     }
   }
-}
-
-function withDriverRegimes(history, events) {
-  return (history ?? []).map((point) => withDriverRegime(point, events));
-}
-
-function withDriverRegime(point, events) {
-  const regime = driverRegimeAt(Number(point?.time), events);
-  return {
-    ...point,
-    driverRegime: regime,
-  };
-}
-
-function driverRegimeAt(timeSeconds, events) {
-  const timeMs = Number(timeSeconds) * 1000;
-  if (!Number.isFinite(timeMs)) {
-    return 0;
-  }
-
-  let selected = null;
-  for (const event of events ?? []) {
-    const openedAt = Number(event?.openedAt);
-    if (!Number.isFinite(openedAt) || openedAt > timeMs) {
-      continue;
-    }
-    const closedAt = Number(event?.closedAt);
-    const expiresAt = Number(event?.expiresAt);
-    const endAt = Number.isFinite(closedAt) ? closedAt : Number.isFinite(expiresAt) ? expiresAt : openedAt;
-    if (timeMs > endAt) {
-      continue;
-    }
-    if (!selected || openedAt > Number(selected.openedAt)) {
-      selected = event;
-    }
-  }
-
-  const side = String(selected?.side ?? "").toUpperCase();
-  if (side === "LONG") {
-    return 1;
-  }
-  if (side === "SHORT") {
-    return -1;
-  }
-  return 0;
 }
 
 function alignTimeToResolution(time) {
@@ -869,12 +803,6 @@ function setSignedClass(element, value) {
   element.classList.toggle("positive", Number(value) >= 0);
 }
 
-function setDriverClass(element, regime) {
-  const value = Number(regime);
-  element.classList.toggle("negative", value < 0);
-  element.classList.toggle("positive", value > 0);
-}
-
 function setText(element, value) {
   element.textContent = value;
 }
@@ -919,28 +847,6 @@ function formatAxisPrice(value) {
     return "";
   }
   return `$${Number(value).toFixed(3)}`;
-}
-
-function formatDriverStatus(regime) {
-  const value = Number(regime);
-  if (value > 0) {
-    return "LONG";
-  }
-  if (value < 0) {
-    return "SHORT";
-  }
-  return "neutral";
-}
-
-function formatAxisDriver(value) {
-  const number = Number(value);
-  if (number > 0) {
-    return "LONG";
-  }
-  if (number < 0) {
-    return "SHORT";
-  }
-  return "";
 }
 
 function formatPercent(value) {

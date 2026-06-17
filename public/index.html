@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>HYPE Live Dashboard</title>
-    <link rel="stylesheet" href="./styles.css?v=9">
+    <link rel="stylesheet" href="./styles.css?v=10">
   </head>
   <body>
     <main class="shell">
@@ -60,6 +60,10 @@
         <div class="range-bar" aria-label="Chart controls">
           <span id="rangeInfo">Range: 1h</span>
           <div class="control-groups">
+            <label class="chart-toggle">
+              <input type="checkbox" id="showDriverMarkers">
+              <span>Show TWAP driver</span>
+            </label>
             <div class="range-buttons" aria-label="Display resolution">
               <button type="button" class="range-btn active" data-resolution="1s">1s</button>
               <button type="button" class="range-btn" data-resolution="5s">5s</button>
@@ -79,14 +83,6 @@
             </div>
           </div>
         </div>
-
-        <article class="chart-panel driver-panel">
-          <div class="chart-head">
-            <h2>TWAP_DRIVER</h2>
-            <strong id="chartDriverValue">--</strong>
-          </div>
-          <div class="tv-chart driver-chart" id="driverChart"></div>
-        </article>
 
         <article class="chart-panel">
           <div class="chart-head">
@@ -153,6 +149,6 @@
 
     <script src="./config.js?v=1"></script>
     <script src="./vendor/lightweight-charts.standalone.production.js"></script>
-    <script type="module" src="./app.js?v=23"></script>
+    <script type="module" src="./app.js?v=24"></script>
   </body>
 </html>

@@ -24,8 +24,9 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(html, /Alert Bot/);
   assert.match(html, /TWAP 1h/);
   assert.match(html, /TWAP 24h/);
-  assert.match(html, /TWAP_DRIVER/);
-  assert.match(html, /id="driverChart"/);
+  assert.match(html, /Show TWAP driver/);
+  assert.match(html, /id="showDriverMarkers"/);
+  assert.doesNotMatch(html, /id="driverChart"/);
   assert.match(html, /id="twap1hChart"/);
   assert.match(html, /id="twap24hChart"/);
   assert.match(html, /id="priceChart"/);
@@ -41,12 +42,11 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /LightweightCharts/);
   assert.match(app, /LineSeries/);
   assert.match(app, /BarSeries/);
-  assert.match(app, /HistogramSeries/);
   assert.match(app, /createSeriesMarkers/);
   assert.match(app, /fetch\(apiPath\("\/api\/twap-driver\/signals"/);
-  assert.match(app, /historyToAlignedRegimeBars/);
   assert.match(app, /driverEventsToCompactMarkers/);
-  assert.match(app, /entry\.id === "driver"/);
+  assert.match(app, /showDriverMarkers/);
+  assert.match(app, /entry\.id === "price"/);
   assert.match(app, /key: "next1h"/);
   assert.match(app, /key: "next24h"/);
   assert.match(app, /key: "funding"/);

@@ -270,14 +270,6 @@ h2 {
   height: 220px;
 }
 
-.driver-panel {
-  padding-bottom: 12px;
-}
-
-.driver-chart {
-  height: 76px;
-}
-
 .tv-chart table {
   border-radius: 6px;
 }
@@ -302,10 +294,29 @@ h2 {
 }
 
 .control-groups {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.chart-toggle {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  gap: 7px;
+  min-height: 33px;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.chart-toggle input {
+  accent-color: var(--cyan);
+  margin: 0;
 }
 
 .range-btn {
