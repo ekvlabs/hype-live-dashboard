@@ -92,17 +92,15 @@ ANALYTICS_DB=/path/to/analytics.sqlite npm start
 
 Aggregates are available at `/api/analytics`.
 
-## Telegram Alerts
+## Telegram Bot
 
-Telegram alerts are disabled unless both bot credentials and thresholds are configured.
+Telegram bot alerts are disabled unless a bot token is configured.
 
 ```bash
 TELEGRAM_BOT_TOKEN=123:abc \
-TELEGRAM_CHAT_ID=123456 \
-TELEGRAM_TWAP_1H_THRESHOLD=1000000 \
-TELEGRAM_TWAP_24H_THRESHOLD=5000000 \
-TELEGRAM_ALERT_COOLDOWN_MS=300000 \
+TELEGRAM_BOT_DB=/path/to/bot.sqlite \
+TELEGRAM_ALERT_COOLDOWN_MS=1800000 \
 npm start
 ```
 
-Thresholds are absolute USD values. If `next1h` or `next24h` crosses the configured threshold, the bot sends a `sendMessage` alert and then suppresses repeated alerts for the cooldown window.
+The bot sends only `TWAP_DRIVER` alerts. `TELEGRAM_ALERT_COOLDOWN_MS` suppresses repeated alerts per user while the same market regime remains active; the production default should stay at 30 minutes unless you intentionally want high-frequency test alerts.
