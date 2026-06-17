@@ -63,6 +63,11 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/twap-driver/signals") {
+      sendJson(res, telegramBot.signalEvents(signalEventQuery(url.searchParams)));
+      return;
+    }
+
     if (url.pathname === "/api/events") {
       handleEvents(req, res);
       return;
@@ -141,6 +146,14 @@ function handleEvents(req, res) {
     clearInterval(heartbeat);
     unsubscribe();
   });
+}
+
+function signalEventQuery(params) {
+  return {
+    limit: params.get("limit"),
+    since: params.get("since"),
+    status: params.get("status"),
+  };
 }
 
 async function serveStatic(pathname, res) {

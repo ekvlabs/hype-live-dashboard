@@ -168,6 +168,30 @@ export class BotStore {
       .map(mapSignalEvent);
   }
 
+  listSignalEvents({ limit = 100, since = 0, status = "" } = {}) {
+    const safeLimit = Math.min(250, Math.max(1, Number(limit) || 100));
+    const safeSince = Math.max(0, Number(since) || 0);
+    const safeStatus = String(status ?? "").trim().toUpperCase();
+    const where = ["opened_at >= ?"];
+    const values = [safeSince];
+    if (["OPEN", "TP", "SL", "TIME"].includes(safeStatus)) {
+      where.push("status = ?");
+      values.push(safeStatus);
+    }
+    values.push(safeLimit);
+
+    return this.db
+      .prepare(`
+        SELECT *
+        FROM telegram_signal_events
+        WHERE ${where.join(" AND ")}
+        ORDER BY opened_at DESC
+        LIMIT ?
+      `)
+      .all(...values)
+      .map(mapPublicSignalEvent);
+  }
+
   signalStats() {
     const row = this.db
       .prepare(`
@@ -216,4 +240,24 @@ function mapSignalEvent(row) {
     entryPrice: Number(row.entry_price),
     expiresAt: Number(row.expires_at),
   };
+}
+
+function mapPublicSignalEvent(row) {
+  return {
+    id: row.id,
+    openedAt: Number(row.opened_at),
+    side: Number(row.side) > 0 ? "LONG" : "SHORT",
+    entryPrice: Number(row.entry_price),
+    expiresAt: Number(row.expires_at),
+    status: row.status,
+    moveBp: nullableNumber(row.move_bp),
+    netTakerBp: nullableNumber(row.net_taker_bp),
+    netMakerBp: nullableNumber(row.net_maker_bp),
+    closedAt: nullableNumber(row.closed_at),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+function nullableNumber(value) {
+  return value === null || value === undefined ? null : Number(value);
 }

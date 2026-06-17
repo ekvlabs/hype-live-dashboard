@@ -35,3 +35,13 @@ test("server exposes compact live state separately from full history snapshots",
   assert.match(serverSource, /url\.pathname === "\/api\/visit"/);
   assert.match(serverSource, /sendJson\(res, compactState\(service\.getState\(\)\)\)/);
 });
+
+test("server exposes sanitized TWAP_DRIVER signal events for charts", async () => {
+  const serverSource = await import("node:fs/promises").then(({ readFile }) =>
+    readFile(new URL("../src/server.js", import.meta.url), "utf8"),
+  );
+
+  assert.match(serverSource, /url\.pathname === "\/api\/twap-driver\/signals"/);
+  assert.match(serverSource, /telegramBot\.signalEvents/);
+  assert.doesNotMatch(serverSource, /telegram_users/);
+});

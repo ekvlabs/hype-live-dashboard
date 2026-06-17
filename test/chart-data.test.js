@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   NEGATIVE_TWAP_COLOR,
+  driverEventsToMarkers,
+  historyToAlignedRegimeBars,
   historyToAlignedLineData,
   historyToAlignedPriceBars,
   historyToLineData,
@@ -15,6 +17,7 @@ import {
   selectedHistoryWindow,
   shouldFollowLiveRange,
   shouldKeepLiveFollowing,
+  upsertAlignedRegimeBarData,
   upsertLineDataPoint,
   upsertAlignedLineDataPoint,
   upsertAlignedPriceBarData,
@@ -25,14 +28,76 @@ import {
 test("normalizedHistory keeps one raw point per second with saved chart values", () => {
   const history = normalizedHistory([
     { t: 1_000, next1h: "10", next24h: "20", price: "55.1" },
-    { t: 1_900, next1h: "11", next24h: "21", price: "55.2", funding: "0.00001", openInterest: "12" },
-    { t: 2_000, next1h: "-5", next24h: "30", price: "55.3" },
+    {
+      t: 1_900,
+      next1h: "11",
+      next24h: "21",
+      price: "55.2",
+      funding: "0.00001",
+      openInterest: "12",
+      driverRegime: "1",
+    },
+    { t: 2_000, next1h: "-5", next24h: "30", price: "55.3", driverRegime: "-1" },
   ]);
 
   assert.deepEqual(history, [
-    { time: 1, next1h: 11, next24h: 21, price: 55.2, funding: 0.00001, openInterest: 12 },
-    { time: 2, next1h: -5, next24h: 30, price: 55.3 },
+    { time: 1, next1h: 11, next24h: 21, price: 55.2, funding: 0.00001, openInterest: 12, driverRegime: 1 },
+    { time: 2, next1h: -5, next24h: 30, price: 55.3, driverRegime: -1 },
   ]);
+});
+
+test("TWAP_DRIVER regime bars and markers align to the shared time axis", () => {
+  const history = [
+    { time: 10, price: 100, driverRegime: 1 },
+    { time: 11, price: 101, driverRegime: 1 },
+    { time: 15, price: 102, driverRegime: -1 },
+    { time: 16, price: 103 },
+    { time: 20, price: 104 },
+  ];
+
+  assert.deepEqual(historyToAlignedRegimeBars(history, 5), [
+    { time: 10, value: 1, color: "#10b437" },
+    { time: 15, value: -1, color: "#e34b4b" },
+    { time: 20, value: 0, color: "rgba(69, 211, 195, 0.18)" },
+  ]);
+  assert.deepEqual(
+    history.reduce((data, point) => upsertAlignedRegimeBarData(data, point, 5), []),
+    [
+      { time: 10, value: 1, color: "#10b437" },
+      { time: 15, value: -1, color: "#e34b4b" },
+      { time: 20, value: 0, color: "rgba(69, 211, 195, 0.18)" },
+    ],
+  );
+
+  assert.deepEqual(
+    driverEventsToMarkers([
+      { id: "a", openedAt: 10_000, side: "LONG", status: "OPEN" },
+      { id: "b", openedAt: 15_000, side: "SHORT", status: "TP", closedAt: 20_000 },
+    ]),
+    [
+      {
+        time: 10,
+        position: "belowBar",
+        color: "#10b437",
+        shape: "arrowUp",
+        text: "ENTRY L",
+      },
+      {
+        time: 15,
+        position: "aboveBar",
+        color: "#e34b4b",
+        shape: "arrowDown",
+        text: "ENTRY S",
+      },
+      {
+        time: 20,
+        position: "belowBar",
+        color: "#45d3c3",
+        shape: "circle",
+        text: "TP",
+      },
+    ],
+  );
 });
 
 test("historyToLineData renders optional Hyperliquid perp fields by bucket close", () => {

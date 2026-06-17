@@ -102,3 +102,70 @@ test("BotStore persists TWAP_DRIVER signal events and stats", () => {
   });
   assert.deepEqual(store.listOpenSignals(), []);
 });
+
+test("BotStore lists sanitized TWAP_DRIVER signal events for public charts", () => {
+  const store = new BotStore(":memory:");
+  store.upsertUser({ chatId: 123, username: "private_user", firstName: "Private", now: 500 });
+
+  store.recordSignalOpened({
+    id: "sig-old",
+    openedAt: 500,
+    side: -1,
+    entryPrice: 99,
+    expiresAt: 1_500,
+  });
+  store.recordSignalOpened({
+    id: "sig-open",
+    openedAt: 1_000,
+    side: 1,
+    entryPrice: 100,
+    expiresAt: 2_000,
+  });
+  store.recordSignalOpened({
+    id: "sig-closed",
+    openedAt: 3_000,
+    side: -1,
+    entryPrice: 105,
+    expiresAt: 4_000,
+  });
+  store.recordSignalClosed({
+    id: "sig-closed",
+    outcome: "SL",
+    moveBp: -20,
+    netTakerBp: -29,
+    netMakerBp: -23,
+    closedAt: 3_500,
+  });
+
+  assert.deepEqual(store.listSignalEvents({ since: 1_000, limit: 10 }), [
+    {
+      id: "sig-closed",
+      openedAt: 3_000,
+      side: "SHORT",
+      entryPrice: 105,
+      expiresAt: 4_000,
+      status: "SL",
+      moveBp: -20,
+      netTakerBp: -29,
+      netMakerBp: -23,
+      closedAt: 3_500,
+      updatedAt: 3_500,
+    },
+    {
+      id: "sig-open",
+      openedAt: 1_000,
+      side: "LONG",
+      entryPrice: 100,
+      expiresAt: 2_000,
+      status: "OPEN",
+      moveBp: null,
+      netTakerBp: null,
+      netMakerBp: null,
+      closedAt: null,
+      updatedAt: 1_000,
+    },
+  ]);
+  assert.deepEqual(store.listSignalEvents({ status: "OPEN", limit: 1 }).map((event) => event.id), ["sig-open"]);
+  assert.equal("chatId" in store.listSignalEvents({ limit: 1 })[0], false);
+  assert.equal("username" in store.listSignalEvents({ limit: 1 })[0], false);
+});

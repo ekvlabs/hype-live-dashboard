@@ -73,6 +73,13 @@ export class TelegramAlertBot {
     return this.store?.signalStats?.() ?? createSignalStats();
   }
 
+  signalEvents(options = {}) {
+    return {
+      items: this.store?.listSignalEvents?.(options) ?? [],
+      stats: this.getSignalStats(),
+    };
+  }
+
   seedHistory(history = []) {
     const latestTimestamp = latestHistoryTimestamp(history);
     if (!Number.isFinite(latestTimestamp)) {

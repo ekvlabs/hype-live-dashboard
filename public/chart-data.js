@@ -7,6 +7,10 @@ export const RESOLUTIONS = [
 ];
 
 export const NEGATIVE_TWAP_COLOR = "#e34b4b";
+export const DRIVER_LONG_COLOR = "#10b437";
+export const DRIVER_SHORT_COLOR = "#e34b4b";
+export const DRIVER_EXIT_COLOR = "#45d3c3";
+export const DRIVER_NEUTRAL_COLOR = "rgba(69, 211, 195, 0.18)";
 export const DEFAULT_MIN_BAR_SPACING = 0.5;
 export const ABSOLUTE_MIN_BAR_SPACING = 0.02;
 
@@ -29,6 +33,10 @@ export function normalizedHistory(history) {
       if (Number.isFinite(value)) {
         normalizedPoint[key] = value;
       }
+    }
+    const driverRegime = Number(point?.driverRegime);
+    if (Number.isFinite(driverRegime) && driverRegime !== 0) {
+      normalizedPoint.driverRegime = driverRegime > 0 ? 1 : -1;
     }
   }
 
@@ -105,6 +113,46 @@ export function historyToAlignedPriceBars(history, resolutionSeconds) {
   }
 
   return bars;
+}
+
+export function historyToAlignedRegimeBars(history, resolutionSeconds) {
+  return bucketHistory(history, resolutionSeconds).map((bucket) => {
+    const regime = lastFiniteRegime(bucket.points);
+    return regimeBarPoint(bucket.time, regime);
+  });
+}
+
+export function driverEventsToMarkers(events) {
+  const markers = [];
+  const seen = new Set();
+  for (const event of events ?? []) {
+    const openedTime = toUnixSeconds(event?.openedAt);
+    const side = String(event?.side ?? "").toUpperCase();
+    if (Number.isFinite(openedTime) && !seen.has(`${event.id}:open`)) {
+      seen.add(`${event.id}:open`);
+      markers.push({
+        time: openedTime,
+        position: side === "SHORT" ? "aboveBar" : "belowBar",
+        color: side === "SHORT" ? DRIVER_SHORT_COLOR : DRIVER_LONG_COLOR,
+        shape: side === "SHORT" ? "arrowDown" : "arrowUp",
+        text: side === "SHORT" ? "ENTRY S" : "ENTRY L",
+      });
+    }
+
+    const status = String(event?.status ?? "").toUpperCase();
+    const closedTime = toUnixSeconds(event?.closedAt);
+    if (Number.isFinite(closedTime) && status && status !== "OPEN" && !seen.has(`${event.id}:close`)) {
+      seen.add(`${event.id}:close`);
+      markers.push({
+        time: closedTime,
+        position: status === "SL" ? "aboveBar" : "belowBar",
+        color: status === "SL" ? DRIVER_SHORT_COLOR : DRIVER_EXIT_COLOR,
+        shape: "circle",
+        text: status,
+      });
+    }
+  }
+  return markers.sort((a, b) => Number(a.time) - Number(b.time));
 }
 
 export function visibleDataRange(data, timeRange = null) {
@@ -278,6 +326,22 @@ export function upsertAlignedPriceBarData(data, historyPoint, resolutionSeconds)
   return upsertSeriesPoint(current, { time });
 }
 
+export function upsertAlignedRegimeBarData(data, historyPoint, resolutionSeconds) {
+  const time = bucketTimeForPoint(historyPoint, resolutionSeconds);
+  if (!Number.isFinite(time)) {
+    return data ?? [];
+  }
+
+  const current = data ?? [];
+  const regime = Number(historyPoint?.driverRegime);
+  const normalizedRegime = Number.isFinite(regime) ? regime : 0;
+  const existing = current.find((point) => Number(point.time) === time);
+  if (existing && normalizedRegime === 0 && Number(existing.value) !== 0) {
+    return current;
+  }
+  return upsertSeriesPoint(current, regimeBarPoint(time, normalizedRegime));
+}
+
 export function pruneSeriesData(data, oldestTime) {
   const cutoff = Number(oldestTime);
   if (!Number.isFinite(cutoff)) {
@@ -317,6 +381,26 @@ function bucketHistory(history, resolutionSeconds) {
   }
 
   return [...buckets.values()].sort((a, b) => a.time - b.time);
+}
+
+function lastFiniteRegime(points) {
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const regime = Number(points[index]?.driverRegime);
+    if (Number.isFinite(regime) && regime !== 0) {
+      return regime > 0 ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
+function regimeBarPoint(time, regime) {
+  const number = Number(regime);
+  const value = number > 0 ? 1 : number < 0 ? -1 : 0;
+  return {
+    time,
+    value,
+    color: value > 0 ? DRIVER_LONG_COLOR : value < 0 ? DRIVER_SHORT_COLOR : DRIVER_NEUTRAL_COLOR,
+  };
 }
 
 function bucketTimeForPoint(point, resolutionSeconds) {

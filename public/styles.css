@@ -270,6 +270,14 @@ h2 {
   height: 220px;
 }
 
+.driver-panel {
+  padding-bottom: 12px;
+}
+
+.driver-chart {
+  height: 76px;
+}
+
 .tv-chart table {
   border-radius: 6px;
 }
