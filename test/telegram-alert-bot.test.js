@@ -54,11 +54,48 @@ test("TelegramAlertBot sends only TWAP_DRIVER alerts", async () => {
 
   assert.equal(messages.length, 1);
   assert.equal(messages[0].chat_id, 10);
-  assert.match(messages[0].text, /TWAP_DRIVER LONG/);
+  assert.match(messages[0].text, /TWAP_DRIVER ENTRY LONG/);
   assert.match(messages[0].text, /Δq24 60m: \+85,000 HYPE/);
   assert.match(messages[0].text, /SL 20bp \/ TP 126bp \/ max hold 45m/);
   assert.match(messages[0].text, /https:\/\/ekvlabs.github.io\/hype-live-dashboard\//);
   assert.equal(store.getUser(10).lastAlertAt, 60 * 60_000 + 1_000);
+});
+
+test("TelegramAlertBot treats repeated same-side TWAP_DRIVER hits as one managed regime", async () => {
+  const store = new BotStore(":memory:");
+  store.upsertUser({ chatId: 10, username: "eva", now: 1_000 });
+
+  const messages = [];
+  const bot = new TelegramAlertBot({
+    botToken: "token",
+    store,
+    cooldownMs: 1,
+    fetchFn: fakeTelegramFetch(messages),
+  });
+
+  await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 20_000, q24: 30_000 }));
+  await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 100, q1: 25_000, q24: 95_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(70 * 60_000 + 1_000, { price: 100.05, q1: 40_000, q24: 170_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(71 * 60_000 + 1_000, { price: 100.06, q1: 41_000, q24: 172_000, premium: 0 }));
+
+  assert.equal(messages.filter((message) => /TWAP_DRIVER ENTRY LONG/.test(message.text)).length, 1);
+  assert.equal(messages.filter((message) => /TWAP_DRIVER EXTEND LONG/.test(message.text)).length, 1);
+  assert.equal(store.signalStats().total, 1);
+  assert.equal(store.listOpenSignals()[0].hitCount, 3);
+
+  await bot.handleSnapshot(snapshotAt(72 * 60_000 + 1_000, { price: 101.3, q1: 41_000, q24: 172_000, premium: 0 }));
+
+  assert.equal(messages.filter((message) => /TWAP_DRIVER EXIT LONG - TP/.test(message.text)).length, 1);
+  assert.deepEqual(
+    store.listSignalEvents({ limit: 1 }).map(({ status, hitCount, mfeBp, maeBp }) => ({
+      status,
+      hitCount,
+      mfeBp,
+      maeBp,
+    })),
+    [{ status: "TP", hitCount: 3, mfeBp: 130, maeBp: 0 }],
+  );
 });
 
 test("TelegramAlertBot tracks TWAP_DRIVER execution stats", async () => {

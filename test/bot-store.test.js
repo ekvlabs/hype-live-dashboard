@@ -79,6 +79,18 @@ test("BotStore persists TWAP_DRIVER signal events and stats", () => {
       side: 1,
       entryPrice: 100,
       expiresAt: 2_000,
+      hitCount: 1,
+      lastHitAt: 1_000,
+      lastNoticeAt: 1_000,
+      mfeBp: 0,
+      maeBp: 0,
+      entryQ1: null,
+      entryQ24: null,
+      entryDq24: null,
+      lastQ1: null,
+      lastQ24: null,
+      lastDq24: null,
+      fadeNotifiedAt: 0,
     },
   ]);
 
@@ -150,6 +162,11 @@ test("BotStore lists sanitized TWAP_DRIVER signal events for public charts", () 
       netMakerBp: -23,
       closedAt: 3_500,
       updatedAt: 3_500,
+      hitCount: 1,
+      lastHitAt: 3_000,
+      lastNoticeAt: 3_000,
+      mfeBp: 0,
+      maeBp: 0,
     },
     {
       id: "sig-open",
@@ -163,9 +180,83 @@ test("BotStore lists sanitized TWAP_DRIVER signal events for public charts", () 
       netMakerBp: null,
       closedAt: null,
       updatedAt: 1_000,
+      hitCount: 1,
+      lastHitAt: 1_000,
+      lastNoticeAt: 1_000,
+      mfeBp: 0,
+      maeBp: 0,
     },
   ]);
   assert.deepEqual(store.listSignalEvents({ status: "OPEN", limit: 1 }).map((event) => event.id), ["sig-open"]);
   assert.equal("chatId" in store.listSignalEvents({ limit: 1 })[0], false);
   assert.equal("username" in store.listSignalEvents({ limit: 1 })[0], false);
+});
+
+test("BotStore stores TWAP_DRIVER regime lifecycle metrics", () => {
+  const store = new BotStore(":memory:");
+
+  store.recordSignalOpened({
+    id: "regime-1",
+    openedAt: 1_000,
+    side: 1,
+    entryPrice: 100,
+    expiresAt: 10_000,
+    entryQ1: 25_000,
+    entryQ24: 95_000,
+    entryDq24: 85_000,
+    lastNoticeAt: 1_000,
+  });
+  store.recordSignalProgress({
+    id: "regime-1",
+    hitCount: 2,
+    lastHitAt: 2_000,
+    lastNoticeAt: 2_000,
+    mfeBp: 42,
+    maeBp: -8,
+    lastQ1: 40_000,
+    lastQ24: 170_000,
+    lastDq24: 140_000,
+  });
+
+  assert.deepEqual(store.listOpenSignals(), [
+    {
+      id: "regime-1",
+      openedAt: 1_000,
+      side: 1,
+      entryPrice: 100,
+      expiresAt: 10_000,
+      hitCount: 2,
+      lastHitAt: 2_000,
+      lastNoticeAt: 2_000,
+      mfeBp: 42,
+      maeBp: -8,
+      entryQ1: 25_000,
+      entryQ24: 95_000,
+      entryDq24: 85_000,
+      lastQ1: 40_000,
+      lastQ24: 170_000,
+      lastDq24: 140_000,
+      fadeNotifiedAt: 0,
+    },
+  ]);
+  assert.deepEqual(store.listSignalEvents({ limit: 1 }), [
+    {
+      id: "regime-1",
+      openedAt: 1_000,
+      side: "LONG",
+      entryPrice: 100,
+      expiresAt: 10_000,
+      status: "OPEN",
+      moveBp: null,
+      netTakerBp: null,
+      netMakerBp: null,
+      closedAt: null,
+      updatedAt: 2_000,
+      hitCount: 2,
+      lastHitAt: 2_000,
+      lastNoticeAt: 2_000,
+      mfeBp: 42,
+      maeBp: -8,
+    },
+  ]);
 });

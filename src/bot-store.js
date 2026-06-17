@@ -38,6 +38,26 @@ export class BotStore {
         updated_at INTEGER NOT NULL
       )
     `);
+    this.ensureSignalColumn("hit_count", "INTEGER NOT NULL DEFAULT 1");
+    this.ensureSignalColumn("last_hit_at", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureSignalColumn("last_notice_at", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureSignalColumn("mfe_bp", "REAL NOT NULL DEFAULT 0");
+    this.ensureSignalColumn("mae_bp", "REAL NOT NULL DEFAULT 0");
+    this.ensureSignalColumn("entry_q1", "REAL");
+    this.ensureSignalColumn("entry_q24", "REAL");
+    this.ensureSignalColumn("entry_dq24", "REAL");
+    this.ensureSignalColumn("last_q1", "REAL");
+    this.ensureSignalColumn("last_q24", "REAL");
+    this.ensureSignalColumn("last_dq24", "REAL");
+    this.ensureSignalColumn("fade_notified_at", "INTEGER NOT NULL DEFAULT 0");
+  }
+
+  ensureSignalColumn(name, definition) {
+    const columns = this.db.prepare("PRAGMA table_info(telegram_signal_events)").all();
+    if (columns.some((column) => column.name === name)) {
+      return;
+    }
+    this.db.exec(`ALTER TABLE telegram_signal_events ADD COLUMN ${name} ${definition}`);
   }
 
   upsertUser({ chatId, username = "", firstName = "", now = Date.now() }) {
@@ -115,7 +135,17 @@ export class BotStore {
       .run(now, chatId);
   }
 
-  recordSignalOpened({ id, openedAt, side, entryPrice, expiresAt }) {
+  recordSignalOpened({
+    id,
+    openedAt,
+    side,
+    entryPrice,
+    expiresAt,
+    entryQ1 = null,
+    entryQ24 = null,
+    entryDq24 = null,
+    lastNoticeAt = openedAt,
+  }) {
     this.db
       .prepare(`
         INSERT OR IGNORE INTO telegram_signal_events (
@@ -125,11 +155,87 @@ export class BotStore {
           entry_price,
           expires_at,
           status,
+          hit_count,
+          last_hit_at,
+          last_notice_at,
+          mfe_bp,
+          mae_bp,
+          entry_q1,
+          entry_q24,
+          entry_dq24,
+          last_q1,
+          last_q24,
+          last_dq24,
+          fade_notified_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, 'OPEN', ?)
+        VALUES (?, ?, ?, ?, ?, 'OPEN', 1, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, 0, ?)
       `)
-      .run(id, Number(openedAt), Number(side), Number(entryPrice), Number(expiresAt), Number(openedAt));
+      .run(
+        id,
+        Number(openedAt),
+        Number(side),
+        Number(entryPrice),
+        Number(expiresAt),
+        Number(openedAt),
+        Number(lastNoticeAt),
+        nullableSqlNumber(entryQ1),
+        nullableSqlNumber(entryQ24),
+        nullableSqlNumber(entryDq24),
+        nullableSqlNumber(entryQ1),
+        nullableSqlNumber(entryQ24),
+        nullableSqlNumber(entryDq24),
+        Number(openedAt),
+      );
+  }
+
+  recordSignalProgress({
+    id,
+    hitCount = null,
+    lastHitAt = null,
+    lastNoticeAt = null,
+    mfeBp = null,
+    maeBp = null,
+    lastQ1 = null,
+    lastQ24 = null,
+    lastDq24 = null,
+    fadeNotifiedAt = null,
+  }) {
+    const updatedAt =
+      Math.max(
+        Number(lastHitAt) || 0,
+        Number(lastNoticeAt) || 0,
+        Number(fadeNotifiedAt) || 0,
+      ) || Date.now();
+    this.db
+      .prepare(`
+        UPDATE telegram_signal_events
+        SET
+          hit_count = COALESCE(?, hit_count),
+          last_hit_at = COALESCE(?, last_hit_at),
+          last_notice_at = COALESCE(?, last_notice_at),
+          mfe_bp = COALESCE(?, mfe_bp),
+          mae_bp = COALESCE(?, mae_bp),
+          last_q1 = COALESCE(?, last_q1),
+          last_q24 = COALESCE(?, last_q24),
+          last_dq24 = COALESCE(?, last_dq24),
+          fade_notified_at = COALESCE(?, fade_notified_at),
+          updated_at = ?
+        WHERE id = ? AND status = 'OPEN'
+      `)
+      .run(
+        nullableSqlNumber(hitCount),
+        nullableSqlNumber(lastHitAt),
+        nullableSqlNumber(lastNoticeAt),
+        nullableSqlNumber(mfeBp),
+        nullableSqlNumber(maeBp),
+        nullableSqlNumber(lastQ1),
+        nullableSqlNumber(lastQ24),
+        nullableSqlNumber(lastDq24),
+        nullableSqlNumber(fadeNotifiedAt),
+        updatedAt,
+        id,
+      );
   }
 
   recordSignalClosed({ id, outcome, moveBp, netTakerBp, netMakerBp, closedAt }) {
@@ -239,6 +345,18 @@ function mapSignalEvent(row) {
     side: Number(row.side),
     entryPrice: Number(row.entry_price),
     expiresAt: Number(row.expires_at),
+    hitCount: Number(row.hit_count) || 1,
+    lastHitAt: Number(row.last_hit_at) || Number(row.opened_at),
+    lastNoticeAt: Number(row.last_notice_at) || Number(row.opened_at),
+    mfeBp: Number(row.mfe_bp) || 0,
+    maeBp: Number(row.mae_bp) || 0,
+    entryQ1: nullableNumber(row.entry_q1),
+    entryQ24: nullableNumber(row.entry_q24),
+    entryDq24: nullableNumber(row.entry_dq24),
+    lastQ1: nullableNumber(row.last_q1),
+    lastQ24: nullableNumber(row.last_q24),
+    lastDq24: nullableNumber(row.last_dq24),
+    fadeNotifiedAt: Number(row.fade_notified_at) || 0,
   };
 }
 
@@ -255,9 +373,18 @@ function mapPublicSignalEvent(row) {
     netMakerBp: nullableNumber(row.net_maker_bp),
     closedAt: nullableNumber(row.closed_at),
     updatedAt: Number(row.updated_at),
+    hitCount: Number(row.hit_count) || 1,
+    lastHitAt: Number(row.last_hit_at) || Number(row.opened_at),
+    lastNoticeAt: Number(row.last_notice_at) || Number(row.opened_at),
+    mfeBp: Number(row.mfe_bp) || 0,
+    maeBp: Number(row.mae_bp) || 0,
   };
 }
 
 function nullableNumber(value) {
   return value === null || value === undefined ? null : Number(value);
+}
+
+function nullableSqlNumber(value) {
+  return value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value);
 }

@@ -13,10 +13,14 @@ const DRIVER_MIN_MONO = 0.65;
 const DRIVER_MAX_PRICE_5M_BP = 10;
 const DRIVER_MAX_PRICE_60M_BP = 80;
 const DRIVER_MAX_PREMIUM_BP = 8;
-const DRIVER_HISTORY_RETENTION_MS = DRIVER_LOOKBACK_MS + 60_000;
 const DRIVER_STOP_BP = 20;
 const DRIVER_TAKE_PROFIT_BP = 126;
 const DRIVER_MAX_HOLD_MINUTES = 45;
+const DRIVER_HISTORY_RETENTION_MS = DRIVER_LOOKBACK_MS + DRIVER_MAX_HOLD_MINUTES * 60_000 + 60_000;
+const DRIVER_CONTINUATION_NOTICE_MS = 10 * 60 * 1_000;
+const DRIVER_EXTEND_Q24_MULTIPLIER = 1.35;
+const DRIVER_FADE_NOTICE_MS = 10 * 60 * 1_000;
+const DRIVER_FADE_Q24_MULTIPLIER = 0.45;
 
 export class TelegramAlertBot {
   constructor({
@@ -229,26 +233,22 @@ export class TelegramAlertBot {
 
     this.samples.push(sample);
     this.trimSamples(sample.t);
-    this.updateSignalOutcomes(sample);
+    const closedNoticeSent = await this.updateSignalOutcomes(sample);
+    if (closedNoticeSent) {
+      return true;
+    }
 
     const signal = detectTwapDriverSignal(this.samples, sample);
+    const activeSignal = this.activeSignal();
+    if (activeSignal) {
+      return this.handleActiveRegime(activeSignal, signal, sample);
+    }
+
     if (!signal) {
       return false;
     }
 
-    let sent = false;
-    for (const user of this.store.listEnabledUsers()) {
-      if (user.lastAlertAt > 0 && sample.t - user.lastAlertAt < this.cooldownMs) {
-        continue;
-      }
-      await this.sendMessage(user.chatId, formatTwapDriverAlert(signal, this.dashboardUrl));
-      this.store.markAlertSent(user.chatId, sample.t);
-      sent = true;
-    }
-    if (sent) {
-      this.trackOpenSignal(signal, sample);
-    }
-    return sent;
+    return this.openRegime(signal, sample);
   }
 
   sampleAtOrBefore(timestamp) {
@@ -267,33 +267,144 @@ export class TelegramAlertBot {
     }
   }
 
+  activeSignal() {
+    return this.openSignals.find((signal) => !signal.closedAt) ?? null;
+  }
+
+  async openRegime(signal, sample) {
+    const tracked = this.trackOpenSignal(signal, sample);
+    return this.notifyEnabledUsers(formatTwapDriverEntryAlert(signal, this.dashboardUrl), sample.t, {
+      respectCooldown: true,
+      markCooldown: true,
+    });
+  }
+
   trackOpenSignal(signal, sample) {
     const tracked = {
       id: `${sample.t}:${signal.side}`,
       side: signal.side,
+      sideLabel: signal.sideLabel,
       entryPrice: sample.price,
       openedAt: sample.t,
       expiresAt: sample.t + DRIVER_MAX_HOLD_MINUTES * 60_000,
+      hitCount: 1,
+      lastHitAt: sample.t,
+      lastNoticeAt: sample.t,
+      mfeBp: 0,
+      maeBp: 0,
+      entryQ1: signal.q1,
+      entryQ24: signal.q24,
+      entryDq24: signal.dq24,
+      lastQ1: signal.q1,
+      lastQ24: signal.q24,
+      lastDq24: signal.dq24,
+      fadeNotifiedAt: 0,
     };
     this.openSignals.push(tracked);
-    this.store?.recordSignalOpened?.(tracked);
+    this.store?.recordSignalOpened?.({
+      ...tracked,
+      entryQ1: signal.q1,
+      entryQ24: signal.q24,
+      entryDq24: signal.dq24,
+      lastNoticeAt: sample.t,
+    });
+    return tracked;
   }
 
-  updateSignalOutcomes(sample) {
+  async handleActiveRegime(activeSignal, signal, sample) {
+    if (signal && signal.side !== activeSignal.side) {
+      const moveBp = priceMoveBp(activeSignal.entryPrice, sample.price, activeSignal.side);
+      this.closeTrackedSignal(activeSignal, "OPPOSITE", moveBp, sample.t);
+      this.openSignals = this.openSignals.filter((tracked) => !tracked.closedAt);
+      const exitSent = await this.notifyEnabledUsers(formatTwapDriverExitNotice(activeSignal, "OPPOSITE", moveBp, sample, this.dashboardUrl), sample.t);
+      const entrySent = await this.openRegime(signal, sample);
+      return exitSent || entrySent;
+    }
+
+    if (signal && signal.side === activeSignal.side) {
+      this.updateRegimeProgress(activeSignal, sample, signal);
+      const noticeType = continuationNoticeType(activeSignal, signal, sample);
+      if (!noticeType) {
+        return false;
+      }
+      activeSignal.lastNoticeAt = sample.t;
+      this.store?.recordSignalProgress?.({
+        id: activeSignal.id,
+        hitCount: activeSignal.hitCount,
+        lastHitAt: activeSignal.lastHitAt,
+        lastNoticeAt: activeSignal.lastNoticeAt,
+        mfeBp: activeSignal.mfeBp,
+        maeBp: activeSignal.maeBp,
+        lastQ1: activeSignal.lastQ1,
+        lastQ24: activeSignal.lastQ24,
+        lastDq24: activeSignal.lastDq24,
+      });
+      return this.notifyEnabledUsers(formatTwapDriverContinuationNotice(activeSignal, noticeType, signal, sample, this.dashboardUrl), sample.t);
+    }
+
+    this.updateRegimeProgress(activeSignal, sample, null);
+    if (shouldNotifyFade(activeSignal, sample)) {
+      activeSignal.fadeNotifiedAt = sample.t;
+      this.store?.recordSignalProgress?.({
+        id: activeSignal.id,
+        fadeNotifiedAt: sample.t,
+        mfeBp: activeSignal.mfeBp,
+        maeBp: activeSignal.maeBp,
+      });
+      return this.notifyEnabledUsers(formatTwapDriverFadeNotice(activeSignal, sample, this.dashboardUrl), sample.t);
+    }
+
+    return false;
+  }
+
+  async updateSignalOutcomes(sample) {
+    let sent = false;
     for (const signal of this.openSignals) {
       if (signal.closedAt) {
         continue;
       }
+      this.updateRegimeProgress(signal, sample, null);
       const moveBp = priceMoveBp(signal.entryPrice, sample.price, signal.side);
       if (moveBp <= -DRIVER_STOP_BP) {
         this.closeTrackedSignal(signal, "SL", -DRIVER_STOP_BP, sample.t);
+        sent = (await this.notifyEnabledUsers(formatTwapDriverExitNotice(signal, "SL", -DRIVER_STOP_BP, sample, this.dashboardUrl), sample.t)) || sent;
       } else if (moveBp >= DRIVER_TAKE_PROFIT_BP) {
         this.closeTrackedSignal(signal, "TP", DRIVER_TAKE_PROFIT_BP, sample.t);
+        sent = (await this.notifyEnabledUsers(formatTwapDriverExitNotice(signal, "TP", DRIVER_TAKE_PROFIT_BP, sample, this.dashboardUrl), sample.t)) || sent;
       } else if (sample.t >= signal.expiresAt) {
         this.closeTrackedSignal(signal, "TIME", moveBp, sample.t);
+        sent = (await this.notifyEnabledUsers(formatTwapDriverExitNotice(signal, "TIME", moveBp, sample, this.dashboardUrl), sample.t)) || sent;
       }
     }
     this.openSignals = this.openSignals.filter((signal) => !signal.closedAt);
+    return sent;
+  }
+
+  updateRegimeProgress(signal, sample, detectedSignal) {
+    const moveBp = priceMoveBp(signal.entryPrice, sample.price, signal.side);
+    if (Number.isFinite(moveBp)) {
+      signal.mfeBp = roundBp(Math.max(Number(signal.mfeBp) || 0, moveBp));
+      signal.maeBp = roundBp(Math.min(Number(signal.maeBp) || 0, moveBp));
+    }
+
+    if (detectedSignal) {
+      signal.hitCount = (Number(signal.hitCount) || 1) + 1;
+      signal.lastHitAt = sample.t;
+      signal.lastQ1 = detectedSignal.q1;
+      signal.lastQ24 = detectedSignal.q24;
+      signal.lastDq24 = detectedSignal.dq24;
+    }
+
+    this.store?.recordSignalProgress?.({
+      id: signal.id,
+      hitCount: signal.hitCount,
+      lastHitAt: signal.lastHitAt,
+      mfeBp: signal.mfeBp,
+      maeBp: signal.maeBp,
+      lastQ1: signal.lastQ1,
+      lastQ24: signal.lastQ24,
+      lastDq24: signal.lastDq24,
+    });
   }
 
   closeTrackedSignal(signal, outcome, moveBp, closedAt) {
@@ -306,6 +417,21 @@ export class TelegramAlertBot {
       netMakerBp: moveBp - 3,
       closedAt,
     });
+  }
+
+  async notifyEnabledUsers(text, now, { respectCooldown = false, markCooldown = false } = {}) {
+    let sent = false;
+    for (const user of this.store.listEnabledUsers()) {
+      if (respectCooldown && user.lastAlertAt > 0 && now - user.lastAlertAt < this.cooldownMs) {
+        continue;
+      }
+      await this.sendMessage(user.chatId, text);
+      if (markCooldown) {
+        this.store.markAlertSent(user.chatId, now);
+      }
+      sent = true;
+    }
+    return sent;
   }
 
   async sendMessage(chatId, text) {
@@ -519,6 +645,10 @@ function priceMoveBp(entryPrice, currentPrice, side) {
   return side * (currentPrice / entryPrice - 1) * 10_000;
 }
 
+function roundBp(value) {
+  return Number(Number(value).toFixed(6));
+}
+
 function monotonicity(samples, fromT, toT, netChange) {
   let previous = null;
   let gross = 0;
@@ -537,10 +667,34 @@ function monotonicity(samples, fromT, toT, netChange) {
   return Math.abs(netChange) / gross;
 }
 
-function formatTwapDriverAlert(signal, dashboardUrl = DEFAULT_DASHBOARD_URL) {
+function continuationNoticeType(activeSignal, signal, sample) {
+  if (sample.t - Number(activeSignal.lastNoticeAt) < DRIVER_CONTINUATION_NOTICE_MS) {
+    return "";
+  }
+
+  const entryQ24 = Math.max(1, Math.abs(Number(activeSignal.entryQ24) || 0));
+  if (Math.abs(signal.q24) >= entryQ24 * DRIVER_EXTEND_Q24_MULTIPLIER) {
+    return "EXTEND";
+  }
+  return "HOLD";
+}
+
+function shouldNotifyFade(activeSignal, sample) {
+  if (Number(activeSignal.fadeNotifiedAt) > 0) {
+    return false;
+  }
+  if (sample.t - Number(activeSignal.openedAt) < DRIVER_FADE_NOTICE_MS) {
+    return false;
+  }
+
+  const entryQ24 = Math.max(1, Math.abs(Number(activeSignal.entryQ24) || 0));
+  return activeSignal.side * sample.q24 <= entryQ24 * DRIVER_FADE_Q24_MULTIPLIER;
+}
+
+function formatTwapDriverEntryAlert(signal, dashboardUrl = DEFAULT_DASHBOARD_URL) {
   const premiumLine = signal.premiumBp === null ? "premium: n/a" : `premium: ${formatBp(signal.premiumBp)}`;
   return [
-    `TWAP_DRIVER ${signal.sideLabel}`,
+    `TWAP_DRIVER ENTRY ${signal.sideLabel}`,
     "",
     `Δq24 60m: ${formatSignedHype(signal.dq24)}`,
     `q1: ${formatSignedHype(signal.q1)}`,
@@ -553,4 +707,72 @@ function formatTwapDriverAlert(signal, dashboardUrl = DEFAULT_DASHBOARD_URL) {
     `Plan: SL ${DRIVER_STOP_BP}bp / TP ${DRIVER_TAKE_PROFIT_BP}bp / max hold ${DRIVER_MAX_HOLD_MINUTES}m`,
     `Dashboard: ${dashboardUrl}`,
   ].join("\n");
+}
+
+function formatTwapDriverContinuationNotice(activeSignal, noticeType, signal, sample, dashboardUrl = DEFAULT_DASHBOARD_URL) {
+  const moveBp = priceMoveBp(activeSignal.entryPrice, sample.price, activeSignal.side);
+  return [
+    `TWAP_DRIVER ${noticeType} ${activeSignal.sideLabel ?? sideLabel(activeSignal.side)}`,
+    "",
+    `Position age: ${formatMinutes(sample.t - activeSignal.openedAt)}`,
+    `Move from entry: ${formatBp(moveBp)}`,
+    `MFE: ${formatBp(activeSignal.mfeBp)}`,
+    `MAE: ${formatBp(activeSignal.maeBp)}`,
+    `Hits: ${activeSignal.hitCount}`,
+    "",
+    `Δq24 60m: ${formatSignedHype(signal.dq24)}`,
+    `q1: ${formatSignedHype(signal.q1)}`,
+    `q24: ${formatSignedHype(signal.q24)}`,
+    "",
+    noticeType === "EXTEND"
+      ? "Action: pressure increased; hold can be extended instead of treating this as a new entry."
+      : "Action: pressure remains aligned; keep managing the existing position.",
+    `Dashboard: ${dashboardUrl}`,
+  ].join("\n");
+}
+
+function formatTwapDriverFadeNotice(activeSignal, sample, dashboardUrl = DEFAULT_DASHBOARD_URL) {
+  const moveBp = priceMoveBp(activeSignal.entryPrice, sample.price, activeSignal.side);
+  return [
+    `TWAP_DRIVER FADE ${activeSignal.sideLabel ?? sideLabel(activeSignal.side)}`,
+    "",
+    `Position age: ${formatMinutes(sample.t - activeSignal.openedAt)}`,
+    `Move from entry: ${formatBp(moveBp)}`,
+    `q24 now: ${formatSignedHype(sample.q24)}`,
+    "",
+    "Action: TWAP pressure weakened; consider tightening the stop or reducing exposure.",
+    `Dashboard: ${dashboardUrl}`,
+  ].join("\n");
+}
+
+function formatTwapDriverExitNotice(activeSignal, outcome, moveBp, sample, dashboardUrl = DEFAULT_DASHBOARD_URL) {
+  return [
+    `TWAP_DRIVER EXIT ${activeSignal.sideLabel ?? sideLabel(activeSignal.side)} - ${outcome}`,
+    "",
+    `Entry: ${formatPrice(activeSignal.entryPrice)}`,
+    `Exit: ${formatPrice(sample.price)}`,
+    `Result: ${formatBp(moveBp)}`,
+    `Net taker: ${formatBp(moveBp - 9)}`,
+    `Net maker: ${formatBp(moveBp - 3)}`,
+    `Hold: ${formatMinutes(sample.t - activeSignal.openedAt)}`,
+    `MFE: ${formatBp(activeSignal.mfeBp)}`,
+    `MAE: ${formatBp(activeSignal.maeBp)}`,
+    `Hits: ${activeSignal.hitCount}`,
+    `Dashboard: ${dashboardUrl}`,
+  ].join("\n");
+}
+
+function sideLabel(side) {
+  return Number(side) > 0 ? "LONG" : "SHORT";
+}
+
+function formatPrice(value) {
+  return `$${new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(value)}`;
+}
+
+function formatMinutes(ms) {
+  return `${Math.max(0, Math.round(Number(ms) / 60_000))}m`;
 }
