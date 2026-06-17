@@ -55,8 +55,10 @@ test("TelegramAlertBot sends only TWAP_DRIVER alerts", async () => {
   assert.equal(messages.length, 1);
   assert.equal(messages[0].chat_id, 10);
   assert.match(messages[0].text, /TWAP_DRIVER ENTRY LONG/);
+  assert.match(messages[0].text, /Entry: \$100\.00/);
   assert.match(messages[0].text, /Δq24 60m: \+85,000 HYPE/);
-  assert.match(messages[0].text, /SL 20bp \/ TP 126bp \/ max hold 45m/);
+  assert.match(messages[0].text, /hard SL 20bp/);
+  assert.match(messages[0].text, /TP1 \+50bp/);
   assert.match(messages[0].text, /https:\/\/ekvlabs.github.io\/hype-live-dashboard\//);
   assert.equal(store.getUser(10).lastAlertAt, 60 * 60_000 + 1_000);
 });
@@ -76,6 +78,7 @@ test("TelegramAlertBot treats repeated same-side TWAP_DRIVER hits as one managed
   await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
   await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 20_000, q24: 30_000 }));
   await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 100, q1: 25_000, q24: 95_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(65 * 60_000 + 1_000, { price: 100.25, q1: 25_000, q24: 95_000, premium: 0 }));
   await bot.handleSnapshot(snapshotAt(70 * 60_000 + 1_000, { price: 100.05, q1: 40_000, q24: 170_000, premium: 0 }));
   await bot.handleSnapshot(snapshotAt(71 * 60_000 + 1_000, { price: 100.06, q1: 41_000, q24: 172_000, premium: 0 }));
 
@@ -86,15 +89,88 @@ test("TelegramAlertBot treats repeated same-side TWAP_DRIVER hits as one managed
 
   await bot.handleSnapshot(snapshotAt(72 * 60_000 + 1_000, { price: 101.3, q1: 41_000, q24: 172_000, premium: 0 }));
 
-  assert.equal(messages.filter((message) => /TWAP_DRIVER EXIT LONG - TP/.test(message.text)).length, 1);
+  assert.equal(messages.filter((message) => /TWAP_DRIVER TP1 LONG/.test(message.text)).length, 1);
+  assert.equal(messages.filter((message) => /TWAP_DRIVER EXIT LONG - TP/.test(message.text)).length, 0);
   assert.deepEqual(
-    store.listSignalEvents({ limit: 1 }).map(({ status, hitCount, mfeBp, maeBp }) => ({
+    store.listSignalEvents({ limit: 1 }).map(({ status, phase, hitCount, mfeBp, maeBp }) => ({
       status,
+      phase,
       hitCount,
       mfeBp,
       maeBp,
     })),
-    [{ status: "TP", hitCount: 3, mfeBp: 130, maeBp: 0 }],
+    [{ status: "OPEN", phase: "TP1", hitCount: 3, mfeBp: 130, maeBp: 0 }],
+  );
+});
+
+test("TelegramAlertBot keeps runner open after TP1 and closes after pressure fade timeout", async () => {
+  const store = new BotStore(":memory:");
+  store.upsertUser({ chatId: 10, username: "eva", now: 1_000 });
+
+  const messages = [];
+  const bot = new TelegramAlertBot({
+    botToken: "token",
+    store,
+    cooldownMs: 1,
+    fetchFn: fakeTelegramFetch(messages),
+  });
+
+  await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 20_000, q24: 30_000 }));
+  await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 100, q1: 25_000, q24: 95_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(65 * 60_000 + 1_000, { price: 100.6, q1: 30_000, q24: 110_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(70 * 60_000 + 1_000, { price: 101.8, q1: 30_000, q24: 110_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(80 * 60_000 + 1_000, { price: 101.4, q1: 5_000, q24: 35_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(96 * 60_000 + 1_000, { price: 101.2, q1: 5_000, q24: 35_000, premium: 0 }));
+
+  assert.equal(messages.filter((message) => /TWAP_DRIVER ENTRY LONG/.test(message.text)).length, 1);
+  assert.equal(messages.filter((message) => /TWAP_DRIVER TP1 LONG/.test(message.text)).length, 1);
+  assert.equal(messages.filter((message) => /TWAP_DRIVER FADE LONG/.test(message.text)).length, 1);
+  assert.equal(messages.filter((message) => /TWAP_DRIVER EXIT LONG - TP/.test(message.text)).length, 1);
+  assert.match(messages.at(-1).text, /Reason: FADE_TIMEOUT/);
+  assert.deepEqual(
+    store.listSignalEvents({ limit: 1 }).map(({ status, phase, exitReason, moveBp, mfeBp, maeBp }) => ({
+      status,
+      phase,
+      exitReason,
+      moveBp,
+      mfeBp,
+      maeBp,
+    })),
+    [{ status: "TP", phase: "FINAL_EXIT", exitReason: "FADE_TIMEOUT", moveBp: 120, mfeBp: 180, maeBp: 0 }],
+  );
+});
+
+test("TelegramAlertBot closes weak TWAP_DRIVER regimes that never develop MFE", async () => {
+  const store = new BotStore(":memory:");
+  store.upsertUser({ chatId: 10, username: "eva", now: 1_000 });
+
+  const messages = [];
+  const bot = new TelegramAlertBot({
+    botToken: "token",
+    store,
+    cooldownMs: 1,
+    fetchFn: fakeTelegramFetch(messages),
+  });
+
+  await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 20_000, q24: 30_000 }));
+  await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 100, q1: 25_000, q24: 95_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(71 * 60_000 + 1_000, { price: 100.1, q1: 25_000, q24: 95_000, premium: 0 }));
+
+  assert.equal(messages.filter((message) => /TWAP_DRIVER ENTRY LONG/.test(message.text)).length, 1);
+  assert.equal(messages.filter((message) => /TWAP_DRIVER EXIT LONG - TIME/.test(message.text)).length, 1);
+  assert.match(messages.at(-1).text, /Reason: WEAK_TIMEOUT/);
+  assert.deepEqual(
+    store.listSignalEvents({ limit: 1 }).map(({ status, phase, exitReason, moveBp, mfeBp, maeBp }) => ({
+      status,
+      phase,
+      exitReason,
+      moveBp,
+      mfeBp,
+      maeBp,
+    })),
+    [{ status: "TIME", phase: "FINAL_EXIT", exitReason: "WEAK_TIMEOUT", moveBp: 10, mfeBp: 10, maeBp: 0 }],
   );
 });
 
@@ -113,13 +189,13 @@ test("TelegramAlertBot tracks TWAP_DRIVER execution stats", async () => {
   await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
   await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 20_000, q24: 30_000 }));
   await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 100, q1: 25_000, q24: 95_000, premium: 0 }));
-  await bot.handleSnapshot(snapshotAt(61 * 60_000 + 1_000, { price: 101.3, q1: 25_000, q24: 95_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(61 * 60_000 + 1_000, { price: 99.75, q1: 25_000, q24: 95_000, premium: 0 }));
 
   await bot.handleUpdate(messageUpdate("/status", { id: 10, username: "eva", first_name: "Eva" }));
 
   assert.match(messages.at(-1).text, /Signals: 1/);
-  assert.match(messages.at(-1).text, /TP: 1/);
-  assert.match(messages.at(-1).text, /Net taker: \+117bp/);
+  assert.match(messages.at(-1).text, /SL: 1/);
+  assert.match(messages.at(-1).text, /Net taker: -29bp/);
 });
 
 test("TelegramAlertBot persists TWAP_DRIVER execution stats across bot restarts", async () => {
@@ -144,13 +220,13 @@ test("TelegramAlertBot persists TWAP_DRIVER execution stats across bot restarts"
     cooldownMs: 30 * 60 * 1_000,
     fetchFn: fakeTelegramFetch(messages),
   });
-  await restartedBot.handleSnapshot(snapshotAt(61 * 60_000 + 1_000, { price: 101.3, q1: 25_000, q24: 95_000, premium: 0 }));
+  await restartedBot.handleSnapshot(snapshotAt(61 * 60_000 + 1_000, { price: 99.75, q1: 25_000, q24: 95_000, premium: 0 }));
   await restartedBot.handleUpdate(messageUpdate("/status", { id: 10, username: "eva", first_name: "Eva" }));
 
   assert.match(messages.at(-1).text, /Signals: 1/);
   assert.match(messages.at(-1).text, /Open: 0/);
-  assert.match(messages.at(-1).text, /TP: 1/);
-  assert.match(messages.at(-1).text, /Net taker: \+117bp/);
+  assert.match(messages.at(-1).text, /SL: 1/);
+  assert.match(messages.at(-1).text, /Net taker: -29bp/);
 });
 
 test("TelegramAlertBot seeds only the history needed for TWAP_DRIVER", () => {
@@ -166,7 +242,7 @@ test("TelegramAlertBot seeds only the history needed for TWAP_DRIVER", () => {
 
   assert.deepEqual(
     bot.samples.map((sample) => sample.t),
-    [2 * 60 * 60_000],
+    [1_000, 2 * 60 * 60_000],
   );
 });
 

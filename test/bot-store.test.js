@@ -91,6 +91,15 @@ test("BotStore persists TWAP_DRIVER signal events and stats", () => {
       lastQ24: null,
       lastDq24: null,
       fadeNotifiedAt: 0,
+      phase: "ACTIVE",
+      phaseUpdatedAt: 1_000,
+      tp1HitAt: 0,
+      breakevenHitAt: 0,
+      runnerStartedAt: 0,
+      weakNotifiedAt: 0,
+      trailStopBp: null,
+      exitReason: "",
+      lastAlignedAt: 1_000,
     },
   ]);
 
@@ -167,6 +176,8 @@ test("BotStore lists sanitized TWAP_DRIVER signal events for public charts", () 
       lastNoticeAt: 3_000,
       mfeBp: 0,
       maeBp: 0,
+      phase: "FINAL_EXIT",
+      exitReason: "",
     },
     {
       id: "sig-open",
@@ -185,6 +196,8 @@ test("BotStore lists sanitized TWAP_DRIVER signal events for public charts", () 
       lastNoticeAt: 1_000,
       mfeBp: 0,
       maeBp: 0,
+      phase: "ACTIVE",
+      exitReason: "",
     },
   ]);
   assert.deepEqual(store.listSignalEvents({ status: "OPEN", limit: 1 }).map((event) => event.id), ["sig-open"]);
@@ -216,6 +229,13 @@ test("BotStore stores TWAP_DRIVER regime lifecycle metrics", () => {
     lastQ1: 40_000,
     lastQ24: 170_000,
     lastDq24: 140_000,
+    phase: "TP1",
+    phaseUpdatedAt: 2_500,
+    tp1HitAt: 2_500,
+    breakevenHitAt: 2_200,
+    runnerStartedAt: 2_500,
+    trailStopBp: 75,
+    lastAlignedAt: 2_500,
   });
 
   assert.deepEqual(store.listOpenSignals(), [
@@ -237,6 +257,15 @@ test("BotStore stores TWAP_DRIVER regime lifecycle metrics", () => {
       lastQ24: 170_000,
       lastDq24: 140_000,
       fadeNotifiedAt: 0,
+      phase: "TP1",
+      phaseUpdatedAt: 2_500,
+      tp1HitAt: 2_500,
+      breakevenHitAt: 2_200,
+      runnerStartedAt: 2_500,
+      weakNotifiedAt: 0,
+      trailStopBp: 75,
+      exitReason: "",
+      lastAlignedAt: 2_500,
     },
   ]);
   assert.deepEqual(store.listSignalEvents({ limit: 1 }), [
@@ -251,12 +280,28 @@ test("BotStore stores TWAP_DRIVER regime lifecycle metrics", () => {
       netTakerBp: null,
       netMakerBp: null,
       closedAt: null,
-      updatedAt: 2_000,
+      updatedAt: 2_500,
       hitCount: 2,
       lastHitAt: 2_000,
       lastNoticeAt: 2_000,
       mfeBp: 42,
       maeBp: -8,
+      phase: "TP1",
+      exitReason: "",
     },
+  ]);
+
+  store.recordSignalClosed({
+    id: "regime-1",
+    outcome: "TP",
+    moveBp: 67,
+    netTakerBp: 58,
+    netMakerBp: 64,
+    closedAt: 3_000,
+    exitReason: "TRAIL",
+  });
+
+  assert.deepEqual(store.listSignalEvents({ limit: 1 }).map(({ status, exitReason, moveBp }) => ({ status, exitReason, moveBp })), [
+    { status: "TP", exitReason: "TRAIL", moveBp: 67 },
   ]);
 });

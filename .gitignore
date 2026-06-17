@@ -5,6 +5,7 @@ node_modules/
 *.log
 *.tar.gz
 *.zip
+tmp-analysis/
 
 data/*.ndjson
 data/*.backup.ndjson

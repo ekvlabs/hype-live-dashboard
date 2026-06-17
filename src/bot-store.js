@@ -50,6 +50,15 @@ export class BotStore {
     this.ensureSignalColumn("last_q24", "REAL");
     this.ensureSignalColumn("last_dq24", "REAL");
     this.ensureSignalColumn("fade_notified_at", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureSignalColumn("phase", "TEXT NOT NULL DEFAULT 'ACTIVE'");
+    this.ensureSignalColumn("phase_updated_at", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureSignalColumn("tp1_hit_at", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureSignalColumn("breakeven_hit_at", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureSignalColumn("runner_started_at", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureSignalColumn("weak_notified_at", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureSignalColumn("trail_stop_bp", "REAL");
+    this.ensureSignalColumn("exit_reason", "TEXT NOT NULL DEFAULT ''");
+    this.ensureSignalColumn("last_aligned_at", "INTEGER NOT NULL DEFAULT 0");
   }
 
   ensureSignalColumn(name, definition) {
@@ -145,6 +154,9 @@ export class BotStore {
     entryQ24 = null,
     entryDq24 = null,
     lastNoticeAt = openedAt,
+    phase = "ACTIVE",
+    phaseUpdatedAt = openedAt,
+    lastAlignedAt = openedAt,
   }) {
     this.db
       .prepare(`
@@ -167,9 +179,18 @@ export class BotStore {
           last_q24,
           last_dq24,
           fade_notified_at,
+          phase,
+          phase_updated_at,
+          tp1_hit_at,
+          breakeven_hit_at,
+          runner_started_at,
+          weak_notified_at,
+          trail_stop_bp,
+          exit_reason,
+          last_aligned_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, 'OPEN', 1, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, 0, ?)
+        VALUES (?, ?, ?, ?, ?, 'OPEN', 1, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, 0, 0, NULL, '', ?, ?)
       `)
       .run(
         id,
@@ -185,6 +206,9 @@ export class BotStore {
         nullableSqlNumber(entryQ1),
         nullableSqlNumber(entryQ24),
         nullableSqlNumber(entryDq24),
+        String(phase || "ACTIVE"),
+        Number(phaseUpdatedAt),
+        Number(lastAlignedAt),
         Number(openedAt),
       );
   }
@@ -200,12 +224,27 @@ export class BotStore {
     lastQ24 = null,
     lastDq24 = null,
     fadeNotifiedAt = null,
+    phase = null,
+    phaseUpdatedAt = null,
+    tp1HitAt = null,
+    breakevenHitAt = null,
+    runnerStartedAt = null,
+    weakNotifiedAt = null,
+    trailStopBp = null,
+    exitReason = null,
+    lastAlignedAt = null,
   }) {
     const updatedAt =
       Math.max(
         Number(lastHitAt) || 0,
         Number(lastNoticeAt) || 0,
         Number(fadeNotifiedAt) || 0,
+        Number(phaseUpdatedAt) || 0,
+        Number(tp1HitAt) || 0,
+        Number(breakevenHitAt) || 0,
+        Number(runnerStartedAt) || 0,
+        Number(weakNotifiedAt) || 0,
+        Number(lastAlignedAt) || 0,
       ) || Date.now();
     this.db
       .prepare(`
@@ -220,6 +259,15 @@ export class BotStore {
           last_q24 = COALESCE(?, last_q24),
           last_dq24 = COALESCE(?, last_dq24),
           fade_notified_at = COALESCE(?, fade_notified_at),
+          phase = COALESCE(?, phase),
+          phase_updated_at = COALESCE(?, phase_updated_at),
+          tp1_hit_at = COALESCE(?, tp1_hit_at),
+          breakeven_hit_at = COALESCE(?, breakeven_hit_at),
+          runner_started_at = COALESCE(?, runner_started_at),
+          weak_notified_at = COALESCE(?, weak_notified_at),
+          trail_stop_bp = COALESCE(?, trail_stop_bp),
+          exit_reason = COALESCE(?, exit_reason),
+          last_aligned_at = COALESCE(?, last_aligned_at),
           updated_at = ?
         WHERE id = ? AND status = 'OPEN'
       `)
@@ -233,12 +281,21 @@ export class BotStore {
         nullableSqlNumber(lastQ24),
         nullableSqlNumber(lastDq24),
         nullableSqlNumber(fadeNotifiedAt),
+        nullableSqlText(phase),
+        nullableSqlNumber(phaseUpdatedAt),
+        nullableSqlNumber(tp1HitAt),
+        nullableSqlNumber(breakevenHitAt),
+        nullableSqlNumber(runnerStartedAt),
+        nullableSqlNumber(weakNotifiedAt),
+        nullableSqlNumber(trailStopBp),
+        nullableSqlText(exitReason),
+        nullableSqlNumber(lastAlignedAt),
         updatedAt,
         id,
       );
   }
 
-  recordSignalClosed({ id, outcome, moveBp, netTakerBp, netMakerBp, closedAt }) {
+  recordSignalClosed({ id, outcome, moveBp, netTakerBp, netMakerBp, closedAt, exitReason = "" }) {
     this.db
       .prepare(`
         UPDATE telegram_signal_events
@@ -248,6 +305,9 @@ export class BotStore {
           net_taker_bp = ?,
           net_maker_bp = ?,
           closed_at = ?,
+          phase = 'FINAL_EXIT',
+          phase_updated_at = ?,
+          exit_reason = ?,
           updated_at = ?
         WHERE id = ? AND status = 'OPEN'
       `)
@@ -257,6 +317,8 @@ export class BotStore {
         Number(netTakerBp),
         Number(netMakerBp),
         Number(closedAt),
+        Number(closedAt),
+        String(exitReason || ""),
         Number(closedAt),
         id,
       );
@@ -280,7 +342,7 @@ export class BotStore {
     const safeStatus = String(status ?? "").trim().toUpperCase();
     const where = ["opened_at >= ?"];
     const values = [safeSince];
-    if (["OPEN", "TP", "SL", "TIME"].includes(safeStatus)) {
+    if (["OPEN", "TP", "SL", "TIME", "OPPOSITE"].includes(safeStatus)) {
       where.push("status = ?");
       values.push(safeStatus);
     }
@@ -357,6 +419,15 @@ function mapSignalEvent(row) {
     lastQ24: nullableNumber(row.last_q24),
     lastDq24: nullableNumber(row.last_dq24),
     fadeNotifiedAt: Number(row.fade_notified_at) || 0,
+    phase: row.phase || "ACTIVE",
+    phaseUpdatedAt: Number(row.phase_updated_at) || Number(row.opened_at),
+    tp1HitAt: Number(row.tp1_hit_at) || 0,
+    breakevenHitAt: Number(row.breakeven_hit_at) || 0,
+    runnerStartedAt: Number(row.runner_started_at) || 0,
+    weakNotifiedAt: Number(row.weak_notified_at) || 0,
+    trailStopBp: nullableNumber(row.trail_stop_bp),
+    exitReason: row.exit_reason || "",
+    lastAlignedAt: Number(row.last_aligned_at) || Number(row.opened_at),
   };
 }
 
@@ -378,6 +449,8 @@ function mapPublicSignalEvent(row) {
     lastNoticeAt: Number(row.last_notice_at) || Number(row.opened_at),
     mfeBp: Number(row.mfe_bp) || 0,
     maeBp: Number(row.mae_bp) || 0,
+    phase: row.phase || "ACTIVE",
+    exitReason: row.exit_reason || "",
   };
 }
 
@@ -387,4 +460,8 @@ function nullableNumber(value) {
 
 function nullableSqlNumber(value) {
   return value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value);
+}
+
+function nullableSqlText(value) {
+  return value === null || value === undefined ? null : String(value);
 }

@@ -14,9 +14,14 @@ const DRIVER_MAX_PRICE_5M_BP = 10;
 const DRIVER_MAX_PRICE_60M_BP = 80;
 const DRIVER_MAX_PREMIUM_BP = 8;
 const DRIVER_STOP_BP = 20;
-const DRIVER_TAKE_PROFIT_BP = 126;
-const DRIVER_MAX_HOLD_MINUTES = 45;
-const DRIVER_HISTORY_RETENTION_MS = DRIVER_LOOKBACK_MS + DRIVER_MAX_HOLD_MINUTES * 60_000 + 60_000;
+const DRIVER_BREAKEVEN_BP = 30;
+const DRIVER_TP1_BP = 50;
+const DRIVER_WEAK_CHECK_MS = 10 * 60 * 1_000;
+const DRIVER_WEAK_MIN_MFE_BP = 20;
+const DRIVER_RUNNER_TRAIL_BP = 120;
+const DRIVER_FADE_GRACE_MS = 15 * 60 * 1_000;
+const DRIVER_MAX_HOLD_MINUTES = 360;
+const DRIVER_HISTORY_RETENTION_MS = DRIVER_LOOKBACK_MS + DRIVER_MAX_HOLD_MINUTES * 60_000 + DRIVER_FADE_GRACE_MS + 60_000;
 const DRIVER_CONTINUATION_NOTICE_MS = 10 * 60 * 1_000;
 const DRIVER_EXTEND_Q24_MULTIPLIER = 1.35;
 const DRIVER_FADE_NOTICE_MS = 10 * 60 * 1_000;
@@ -273,7 +278,7 @@ export class TelegramAlertBot {
 
   async openRegime(signal, sample) {
     const tracked = this.trackOpenSignal(signal, sample);
-    return this.notifyEnabledUsers(formatTwapDriverEntryAlert(signal, this.dashboardUrl), sample.t, {
+    return this.notifyEnabledUsers(formatTwapDriverEntryAlert(signal, sample, this.dashboardUrl), sample.t, {
       respectCooldown: true,
       markCooldown: true,
     });
@@ -299,6 +304,15 @@ export class TelegramAlertBot {
       lastQ24: signal.q24,
       lastDq24: signal.dq24,
       fadeNotifiedAt: 0,
+      phase: "ACTIVE",
+      phaseUpdatedAt: sample.t,
+      tp1HitAt: 0,
+      breakevenHitAt: 0,
+      runnerStartedAt: 0,
+      weakNotifiedAt: 0,
+      trailStopBp: null,
+      exitReason: "",
+      lastAlignedAt: sample.t,
     };
     this.openSignals.push(tracked);
     this.store?.recordSignalOpened?.({
@@ -307,6 +321,9 @@ export class TelegramAlertBot {
       entryQ24: signal.q24,
       entryDq24: signal.dq24,
       lastNoticeAt: sample.t,
+      phase: "ACTIVE",
+      phaseUpdatedAt: sample.t,
+      lastAlignedAt: sample.t,
     });
     return tracked;
   }
@@ -314,43 +331,38 @@ export class TelegramAlertBot {
   async handleActiveRegime(activeSignal, signal, sample) {
     if (signal && signal.side !== activeSignal.side) {
       const moveBp = priceMoveBp(activeSignal.entryPrice, sample.price, activeSignal.side);
-      this.closeTrackedSignal(activeSignal, "OPPOSITE", moveBp, sample.t);
+      this.closeTrackedSignal(activeSignal, "OPPOSITE", moveBp, sample.t, "OPPOSITE_SIGNAL");
       this.openSignals = this.openSignals.filter((tracked) => !tracked.closedAt);
       const exitSent = await this.notifyEnabledUsers(formatTwapDriverExitNotice(activeSignal, "OPPOSITE", moveBp, sample, this.dashboardUrl), sample.t);
       const entrySent = await this.openRegime(signal, sample);
       return exitSent || entrySent;
     }
 
+    this.updateRegimeProgress(activeSignal, sample, signal && signal.side === activeSignal.side ? signal : null);
+    const exit = lifecycleExit(activeSignal, sample);
+    if (exit) {
+      this.closeTrackedSignal(activeSignal, exit.outcome, exit.moveBp, sample.t, exit.reason);
+      this.openSignals = this.openSignals.filter((tracked) => !tracked.closedAt);
+      return this.notifyEnabledUsers(formatTwapDriverExitNotice(activeSignal, exit.outcome, exit.moveBp, sample, this.dashboardUrl), sample.t);
+    }
+
+    const phaseNotice = lifecyclePhaseNotice(activeSignal, signal, sample);
+    if (phaseNotice) {
+      this.applyPhaseNotice(activeSignal, phaseNotice, sample);
+      return this.notifyEnabledUsers(formatTwapDriverPhaseNotice(activeSignal, phaseNotice, signal, sample, this.dashboardUrl), sample.t);
+    }
+
     if (signal && signal.side === activeSignal.side) {
-      this.updateRegimeProgress(activeSignal, sample, signal);
       const noticeType = continuationNoticeType(activeSignal, signal, sample);
       if (!noticeType) {
         return false;
       }
-      activeSignal.lastNoticeAt = sample.t;
-      this.store?.recordSignalProgress?.({
-        id: activeSignal.id,
-        hitCount: activeSignal.hitCount,
-        lastHitAt: activeSignal.lastHitAt,
-        lastNoticeAt: activeSignal.lastNoticeAt,
-        mfeBp: activeSignal.mfeBp,
-        maeBp: activeSignal.maeBp,
-        lastQ1: activeSignal.lastQ1,
-        lastQ24: activeSignal.lastQ24,
-        lastDq24: activeSignal.lastDq24,
-      });
+      this.applyPhaseNotice(activeSignal, { phase: activeSignal.phase || "ACTIVE", noticeType }, sample);
       return this.notifyEnabledUsers(formatTwapDriverContinuationNotice(activeSignal, noticeType, signal, sample, this.dashboardUrl), sample.t);
     }
 
-    this.updateRegimeProgress(activeSignal, sample, null);
     if (shouldNotifyFade(activeSignal, sample)) {
-      activeSignal.fadeNotifiedAt = sample.t;
-      this.store?.recordSignalProgress?.({
-        id: activeSignal.id,
-        fadeNotifiedAt: sample.t,
-        mfeBp: activeSignal.mfeBp,
-        maeBp: activeSignal.maeBp,
-      });
+      this.applyPhaseNotice(activeSignal, { phase: "FADE", noticeType: "FADE", fadeNotifiedAt: sample.t }, sample);
       return this.notifyEnabledUsers(formatTwapDriverFadeNotice(activeSignal, sample, this.dashboardUrl), sample.t);
     }
 
@@ -366,14 +378,12 @@ export class TelegramAlertBot {
       this.updateRegimeProgress(signal, sample, null);
       const moveBp = priceMoveBp(signal.entryPrice, sample.price, signal.side);
       if (moveBp <= -DRIVER_STOP_BP) {
-        this.closeTrackedSignal(signal, "SL", -DRIVER_STOP_BP, sample.t);
+        this.closeTrackedSignal(signal, "SL", -DRIVER_STOP_BP, sample.t, "HARD_SL");
         sent = (await this.notifyEnabledUsers(formatTwapDriverExitNotice(signal, "SL", -DRIVER_STOP_BP, sample, this.dashboardUrl), sample.t)) || sent;
-      } else if (moveBp >= DRIVER_TAKE_PROFIT_BP) {
-        this.closeTrackedSignal(signal, "TP", DRIVER_TAKE_PROFIT_BP, sample.t);
-        sent = (await this.notifyEnabledUsers(formatTwapDriverExitNotice(signal, "TP", DRIVER_TAKE_PROFIT_BP, sample, this.dashboardUrl), sample.t)) || sent;
       } else if (sample.t >= signal.expiresAt) {
-        this.closeTrackedSignal(signal, "TIME", moveBp, sample.t);
-        sent = (await this.notifyEnabledUsers(formatTwapDriverExitNotice(signal, "TIME", moveBp, sample, this.dashboardUrl), sample.t)) || sent;
+        const outcome = moveBp > 0 ? "TP" : "TIME";
+        this.closeTrackedSignal(signal, outcome, moveBp, sample.t, "MAX_HOLD");
+        sent = (await this.notifyEnabledUsers(formatTwapDriverExitNotice(signal, outcome, moveBp, sample, this.dashboardUrl), sample.t)) || sent;
       }
     }
     this.openSignals = this.openSignals.filter((signal) => !signal.closedAt);
@@ -385,6 +395,14 @@ export class TelegramAlertBot {
     if (Number.isFinite(moveBp)) {
       signal.mfeBp = roundBp(Math.max(Number(signal.mfeBp) || 0, moveBp));
       signal.maeBp = roundBp(Math.min(Number(signal.maeBp) || 0, moveBp));
+      if (Number(signal.tp1HitAt) > 0) {
+        const nextTrailStop = roundBp(Math.max(0, signal.mfeBp - DRIVER_RUNNER_TRAIL_BP));
+        signal.trailStopBp = Math.max(Number(signal.trailStopBp) || 0, nextTrailStop);
+      }
+    }
+
+    if (isPressureAligned(signal, sample)) {
+      signal.lastAlignedAt = sample.t;
     }
 
     if (detectedSignal) {
@@ -404,11 +422,59 @@ export class TelegramAlertBot {
       lastQ1: signal.lastQ1,
       lastQ24: signal.lastQ24,
       lastDq24: signal.lastDq24,
+      trailStopBp: signal.trailStopBp,
+      lastAlignedAt: signal.lastAlignedAt,
     });
   }
 
-  closeTrackedSignal(signal, outcome, moveBp, closedAt) {
+  applyPhaseNotice(signal, notice, sample) {
+    signal.phase = notice.phase || signal.phase || "ACTIVE";
+    signal.phaseUpdatedAt = sample.t;
+    signal.lastNoticeAt = sample.t;
+    if (notice.tp1HitAt) {
+      signal.tp1HitAt = notice.tp1HitAt;
+    }
+    if (notice.breakevenHitAt) {
+      signal.breakevenHitAt = notice.breakevenHitAt;
+    }
+    if (notice.runnerStartedAt) {
+      signal.runnerStartedAt = notice.runnerStartedAt;
+    }
+    if (notice.weakNotifiedAt) {
+      signal.weakNotifiedAt = notice.weakNotifiedAt;
+    }
+    if (notice.fadeNotifiedAt) {
+      signal.fadeNotifiedAt = notice.fadeNotifiedAt;
+    }
+    if (Number.isFinite(Number(notice.trailStopBp))) {
+      signal.trailStopBp = Number(notice.trailStopBp);
+    }
+    this.store?.recordSignalProgress?.({
+      id: signal.id,
+      hitCount: signal.hitCount,
+      lastHitAt: signal.lastHitAt,
+      lastNoticeAt: signal.lastNoticeAt,
+      mfeBp: signal.mfeBp,
+      maeBp: signal.maeBp,
+      lastQ1: signal.lastQ1,
+      lastQ24: signal.lastQ24,
+      lastDq24: signal.lastDq24,
+      fadeNotifiedAt: signal.fadeNotifiedAt,
+      phase: signal.phase,
+      phaseUpdatedAt: signal.phaseUpdatedAt,
+      tp1HitAt: signal.tp1HitAt,
+      breakevenHitAt: signal.breakevenHitAt,
+      runnerStartedAt: signal.runnerStartedAt,
+      weakNotifiedAt: signal.weakNotifiedAt,
+      trailStopBp: signal.trailStopBp,
+      lastAlignedAt: signal.lastAlignedAt,
+    });
+  }
+
+  closeTrackedSignal(signal, outcome, moveBp, closedAt, exitReason = "") {
     signal.closedAt = closedAt;
+    signal.exitReason = exitReason;
+    signal.phase = "FINAL_EXIT";
     this.store?.recordSignalClosed?.({
       id: signal.id,
       outcome,
@@ -416,6 +482,7 @@ export class TelegramAlertBot {
       netTakerBp: moveBp - 9,
       netMakerBp: moveBp - 3,
       closedAt,
+      exitReason,
     });
   }
 
@@ -484,7 +551,14 @@ function signalDescriptionText(dashboardUrl = DEFAULT_DASHBOARD_URL) {
     "mono24 >= 0.65",
     "premium not overheated",
     "",
-    `Plan: SL ${DRIVER_STOP_BP}bp / TP ${DRIVER_TAKE_PROFIT_BP}bp / max hold ${DRIVER_MAX_HOLD_MINUTES}m`,
+    "Lifecycle:",
+    "ENTRY -> ACTIVE by default",
+    `hard SL ${DRIVER_STOP_BP}bp`,
+    `weak close if MFE < ${DRIVER_WEAK_MIN_MFE_BP}bp after ${formatMinutes(DRIVER_WEAK_CHECK_MS)}`,
+    `BE after +${DRIVER_BREAKEVEN_BP}bp`,
+    `TP1 +${DRIVER_TP1_BP}bp, then runner while TWAP pressure stays aligned`,
+    `fade timeout ${formatMinutes(DRIVER_FADE_GRACE_MS)} after pressure weakens`,
+    `max regime ${DRIVER_MAX_HOLD_MINUTES}m`,
     `Dashboard: ${dashboardUrl}`,
   ].join("\n");
 }
@@ -496,7 +570,7 @@ function statusText(user, stats = createSignalStats(), dashboardUrl = DEFAULT_DA
   return [
     user.enabled ? "Alerts enabled" : "Alerts disabled",
     "Signal: TWAP_DRIVER",
-    `Plan: SL ${DRIVER_STOP_BP}bp / TP ${DRIVER_TAKE_PROFIT_BP}bp / max hold ${DRIVER_MAX_HOLD_MINUTES}m`,
+    `Plan: hard SL ${DRIVER_STOP_BP}bp / weak ${formatMinutes(DRIVER_WEAK_CHECK_MS)} / BE +${DRIVER_BREAKEVEN_BP}bp / TP1 +${DRIVER_TP1_BP}bp / max ${DRIVER_MAX_HOLD_MINUTES}m`,
     "",
     `Signals: ${stats.total}`,
     `Open: ${stats.open}`,
@@ -672,11 +746,95 @@ function continuationNoticeType(activeSignal, signal, sample) {
     return "";
   }
 
+  if (["TP1", "RUNNER", "FADE"].includes(String(activeSignal.phase || "").toUpperCase())) {
+    return "";
+  }
+
   const entryQ24 = Math.max(1, Math.abs(Number(activeSignal.entryQ24) || 0));
   if (Math.abs(signal.q24) >= entryQ24 * DRIVER_EXTEND_Q24_MULTIPLIER) {
     return "EXTEND";
   }
   return "HOLD";
+}
+
+function lifecycleExit(activeSignal, sample) {
+  const moveBp = priceMoveBp(activeSignal.entryPrice, sample.price, activeSignal.side);
+  if (!Number.isFinite(moveBp)) {
+    return null;
+  }
+
+  if (moveBp <= -DRIVER_STOP_BP) {
+    return { outcome: "SL", moveBp: -DRIVER_STOP_BP, reason: "HARD_SL" };
+  }
+
+  if (Number(activeSignal.breakevenHitAt) > 0 && moveBp <= 0) {
+    return { outcome: "TIME", moveBp: 0, reason: "BREAKEVEN_STOP" };
+  }
+
+  if (
+    Number(activeSignal.tp1HitAt) > 0 &&
+    Number.isFinite(Number(activeSignal.trailStopBp)) &&
+    moveBp <= Number(activeSignal.trailStopBp)
+  ) {
+    const trailMove = Math.max(0, Number(activeSignal.trailStopBp));
+    return { outcome: trailMove > 0 ? "TP" : "TIME", moveBp: trailMove, reason: "TRAIL" };
+  }
+
+  if (
+    Number(activeSignal.weakNotifiedAt) <= 0 &&
+    sample.t - Number(activeSignal.openedAt) >= DRIVER_WEAK_CHECK_MS &&
+    Number(activeSignal.mfeBp) < DRIVER_WEAK_MIN_MFE_BP
+  ) {
+    return { outcome: moveBp > 0 ? "TIME" : "SL", moveBp: roundBp(moveBp), reason: "WEAK_TIMEOUT" };
+  }
+
+  if (Number(activeSignal.fadeNotifiedAt) > 0 && sample.t - Number(activeSignal.fadeNotifiedAt) >= DRIVER_FADE_GRACE_MS) {
+    return { outcome: moveBp > 0 ? "TP" : "TIME", moveBp: roundBp(moveBp), reason: "FADE_TIMEOUT" };
+  }
+
+  if (sample.t >= Number(activeSignal.expiresAt)) {
+    return { outcome: moveBp > 0 ? "TP" : "TIME", moveBp: roundBp(moveBp), reason: "MAX_HOLD" };
+  }
+
+  return null;
+}
+
+function lifecyclePhaseNotice(activeSignal, signal, sample) {
+  const moveBp = priceMoveBp(activeSignal.entryPrice, sample.price, activeSignal.side);
+  if (!Number.isFinite(moveBp)) {
+    return null;
+  }
+
+  if (Number(activeSignal.tp1HitAt) <= 0 && moveBp >= DRIVER_TP1_BP) {
+    const trailStopBp = Math.max(0, roundBp((Number(activeSignal.mfeBp) || moveBp) - DRIVER_RUNNER_TRAIL_BP));
+    return {
+      phase: "TP1",
+      noticeType: "TP1",
+      tp1HitAt: sample.t,
+      breakevenHitAt: Number(activeSignal.breakevenHitAt) || sample.t,
+      runnerStartedAt: sample.t,
+      trailStopBp,
+    };
+  }
+
+  if (Number(activeSignal.breakevenHitAt) <= 0 && moveBp >= DRIVER_BREAKEVEN_BP) {
+    return {
+      phase: "BE",
+      noticeType: "BE",
+      breakevenHitAt: sample.t,
+      trailStopBp: 0,
+    };
+  }
+
+  if (shouldNotifyFade(activeSignal, sample)) {
+    return {
+      phase: "FADE",
+      noticeType: "FADE",
+      fadeNotifiedAt: sample.t,
+    };
+  }
+
+  return null;
 }
 
 function shouldNotifyFade(activeSignal, sample) {
@@ -691,11 +849,17 @@ function shouldNotifyFade(activeSignal, sample) {
   return activeSignal.side * sample.q24 <= entryQ24 * DRIVER_FADE_Q24_MULTIPLIER;
 }
 
-function formatTwapDriverEntryAlert(signal, dashboardUrl = DEFAULT_DASHBOARD_URL) {
+function isPressureAligned(activeSignal, sample) {
+  return Number(activeSignal.side) * Number(sample.q24) > 0;
+}
+
+function formatTwapDriverEntryAlert(signal, sample, dashboardUrl = DEFAULT_DASHBOARD_URL) {
   const premiumLine = signal.premiumBp === null ? "premium: n/a" : `premium: ${formatBp(signal.premiumBp)}`;
   return [
     `TWAP_DRIVER ENTRY ${signal.sideLabel}`,
     "",
+    `Entry: ${formatPrice(sample.price)}`,
+    "Status: ACTIVE",
     `Δq24 60m: ${formatSignedHype(signal.dq24)}`,
     `q1: ${formatSignedHype(signal.q1)}`,
     `q24: ${formatSignedHype(signal.q24)}`,
@@ -704,9 +868,48 @@ function formatTwapDriverEntryAlert(signal, dashboardUrl = DEFAULT_DASHBOARD_URL
     `price 60m: ${formatBp(signal.priceRet60mBp)}`,
     premiumLine,
     "",
-    `Plan: SL ${DRIVER_STOP_BP}bp / TP ${DRIVER_TAKE_PROFIT_BP}bp / max hold ${DRIVER_MAX_HOLD_MINUTES}m`,
+    `Plan: hard SL ${DRIVER_STOP_BP}bp / weak ${formatMinutes(DRIVER_WEAK_CHECK_MS)} / BE +${DRIVER_BREAKEVEN_BP}bp / TP1 +${DRIVER_TP1_BP}bp / max ${DRIVER_MAX_HOLD_MINUTES}m`,
     `Dashboard: ${dashboardUrl}`,
   ].join("\n");
+}
+
+function formatTwapDriverPhaseNotice(activeSignal, notice, signal, sample, dashboardUrl = DEFAULT_DASHBOARD_URL) {
+  const moveBp = priceMoveBp(activeSignal.entryPrice, sample.price, activeSignal.side);
+  const type = notice.noticeType || notice.phase;
+  const lines = [
+    `TWAP_DRIVER ${type} ${activeSignal.sideLabel ?? sideLabel(activeSignal.side)}`,
+    "",
+    `Entry: ${formatPrice(activeSignal.entryPrice)}`,
+    `Now: ${formatPrice(sample.price)} (${formatBp(moveBp)})`,
+    `Position age: ${formatMinutes(sample.t - activeSignal.openedAt)}`,
+    `MFE: ${formatBp(activeSignal.mfeBp)}`,
+    `MAE: ${formatBp(activeSignal.maeBp)}`,
+    `Hits: ${activeSignal.hitCount}`,
+  ];
+
+  if (type === "BE") {
+    lines.push("", "Action: move stop to breakeven. Keep position only while TWAP pressure remains aligned.");
+  } else if (type === "TP1") {
+    lines.push(
+      "",
+      "Action: TP1 reached. Take partial if needed, move stop to breakeven, keep runner while TWAP pressure remains aligned.",
+      `Runner trail: ${formatBp(activeSignal.trailStopBp ?? notice.trailStopBp ?? 0)}`,
+    );
+  } else if (type === "FADE") {
+    lines.push(
+      "",
+      `Action: pressure weakened. Tighten stop or set take-profit; bot will close the regime after ${formatMinutes(DRIVER_FADE_GRACE_MS)} if pressure does not recover.`,
+    );
+  }
+
+  if (signal) {
+    lines.push("", `Δq24 60m: ${formatSignedHype(signal.dq24)}`, `q1: ${formatSignedHype(signal.q1)}`, `q24: ${formatSignedHype(signal.q24)}`);
+  } else {
+    lines.push("", `q1 now: ${formatSignedHype(sample.q1)}`, `q24 now: ${formatSignedHype(sample.q24)}`);
+  }
+
+  lines.push(`Dashboard: ${dashboardUrl}`);
+  return lines.join("\n");
 }
 
 function formatTwapDriverContinuationNotice(activeSignal, noticeType, signal, sample, dashboardUrl = DEFAULT_DASHBOARD_URL) {
@@ -740,7 +943,7 @@ function formatTwapDriverFadeNotice(activeSignal, sample, dashboardUrl = DEFAULT
     `Move from entry: ${formatBp(moveBp)}`,
     `q24 now: ${formatSignedHype(sample.q24)}`,
     "",
-    "Action: TWAP pressure weakened; consider tightening the stop or reducing exposure.",
+    `Action: TWAP pressure weakened; tighten stop or set take-profit. Fade timeout: ${formatMinutes(DRIVER_FADE_GRACE_MS)}.`,
     `Dashboard: ${dashboardUrl}`,
   ].join("\n");
 }
@@ -752,6 +955,7 @@ function formatTwapDriverExitNotice(activeSignal, outcome, moveBp, sample, dashb
     `Entry: ${formatPrice(activeSignal.entryPrice)}`,
     `Exit: ${formatPrice(sample.price)}`,
     `Result: ${formatBp(moveBp)}`,
+    `Reason: ${activeSignal.exitReason || outcome}`,
     `Net taker: ${formatBp(moveBp - 9)}`,
     `Net maker: ${formatBp(moveBp - 3)}`,
     `Hold: ${formatMinutes(sample.t - activeSignal.openedAt)}`,
