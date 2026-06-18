@@ -1,4 +1,5 @@
 export const DEFAULT_HISTORY_MAX_POINTS = 100_000;
+const HISTORY_RESOLUTION_STEPS_SECONDS = [1, 5, 15, 60, 300, 900, 1800, 3600];
 
 export function compactState(state) {
   return {
@@ -61,7 +62,12 @@ function effectiveHistoryResolutionSeconds(hours, requestedResolutionSeconds, ma
   const spanSeconds = Math.max(1, Number(hours) || 1) * 60 * 60;
   const requested = Math.max(1, Number(requestedResolutionSeconds) || 1);
   const minimum = Math.ceil(spanSeconds / Math.max(1, Number(maxPoints) || DEFAULT_HISTORY_MAX_POINTS));
-  return Math.max(requested, minimum);
+  return roundHistoryResolutionSeconds(Math.max(requested, minimum));
+}
+
+function roundHistoryResolutionSeconds(seconds) {
+  const minimum = Math.max(1, Number(seconds) || 1);
+  return HISTORY_RESOLUTION_STEPS_SECONDS.find((step) => step >= minimum) ?? minimum;
 }
 
 function compactHistoryByResolution(history, resolutionSeconds) {

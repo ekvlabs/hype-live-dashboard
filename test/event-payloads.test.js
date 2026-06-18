@@ -53,6 +53,23 @@ test("historyPayload returns a bounded requested window with effective resolutio
   });
 });
 
+test("historyPayload rounds effective resolution to readable chart steps", () => {
+  const hour = 60 * 60_000;
+  const state = {
+    config: { intervalMs: 1_000, maxHistoryHours: 336 },
+    history: [
+      { t: 0, price: 10, next1h: 1, next24h: 2 },
+      { t: 336 * hour, price: 11, next1h: 3, next24h: 4 },
+    ],
+  };
+
+  assert.equal(
+    historyPayload(state, { hours: 336, resolutionSeconds: 1, maxPoints: 100_000 }).config
+      .historyResolutionSeconds,
+    15,
+  );
+});
+
 test("server exposes compact live state separately from full history snapshots", async () => {
   const serverSource = await import("node:fs/promises").then(({ readFile }) =>
     readFile(new URL("../src/server.js", import.meta.url), "utf8"),
