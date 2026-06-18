@@ -62,7 +62,8 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /botUrl/);
   assert.match(app, /AbortController/);
   assert.match(app, /liveFetchInFlight/);
-  assert.match(app, /fetch\(apiPath\("\/api\/snapshot"\)/);
+  assert.match(app, /fetchHistory\(/);
+  assert.match(app, /fetch\(apiPath\("\/api\/history"\) \+ historyQueryString\(\)/);
   assert.match(app, /fetch\(apiPath\("\/api\/state"\)/);
   assert.match(app, /fetch\(apiPath\("\/api\/visit"\)/);
   assert.match(app, /historyPointFromSnapshot/);

@@ -134,6 +134,7 @@ let selectedResolution = RESOLUTIONS[0];
 let lastState = null;
 let pollTimer = null;
 let liveFetchInFlight = false;
+let historyRequestId = 0;
 let hasAppliedInitialRange = false;
 let isLiveFollowing = true;
 let isSyncingRange = false;
@@ -281,7 +282,7 @@ function wireRangeControls() {
       }
       isLiveFollowing = true;
       applyTimeScaleDensity();
-      render(lastState, { forceRange: true });
+      loadHistory({ forceRange: true });
     });
   }
 }
@@ -296,7 +297,7 @@ function wireResolutionControls() {
       }
       isLiveFollowing = true;
       applyTimeScaleDensity();
-      render(lastState, { forceRange: true });
+      loadHistory({ forceRange: true });
     });
   }
 }
@@ -404,17 +405,49 @@ function connectEvents() {
 
 async function fetchSnapshot() {
   try {
-    const [state, signalPayload] = await Promise.all([
-      fetch(apiPath("/api/snapshot"), { cache: "no-store" }).then((response) => response.json()),
+    const [state, historyState, signalPayload] = await Promise.all([
+      fetch(apiPath("/api/state"), { cache: "no-store" }).then((response) => response.json()),
+      fetchHistory(),
       fetchDriverSignalEvents().catch(() => null),
     ]);
     render({
       ...state,
+      history: historyState?.history ?? [],
+      config: {
+        ...(state.config ?? {}),
+        ...(historyState?.config ?? {}),
+      },
       driverEvents: signalPayload?.items ?? [],
-    });
+    }, { forceRange: true });
   } catch (error) {
     setStatus({ ok: false, message: error.message });
     startPolling();
+  }
+}
+
+async function loadHistory(options = {}) {
+  const requestId = ++historyRequestId;
+  try {
+    const historyState = await fetchHistory();
+    if (requestId !== historyRequestId) {
+      return false;
+    }
+    render({
+      ...lastState,
+      history: historyState?.history ?? [],
+      config: {
+        ...(lastState?.config ?? {}),
+        ...(historyState?.config ?? {}),
+      },
+    }, {
+      forceRange: Boolean(options.forceRange),
+    });
+    return true;
+  } catch (error) {
+    if (requestId === historyRequestId) {
+      setStatus({ ok: false, message: error.message });
+    }
+    return false;
   }
 }
 
@@ -463,6 +496,22 @@ async function fetchDriverSignalEvents() {
     throw new Error(`signals ${response.status}`);
   }
   return response.json();
+}
+
+async function fetchHistory() {
+  const response = await fetch(apiPath("/api/history") + historyQueryString(), { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`history ${response.status}`);
+  }
+  return response.json();
+}
+
+function historyQueryString() {
+  const params = new URLSearchParams({
+    hours: String(selectedHours),
+    resolution: String(selectedResolution.seconds),
+  });
+  return `?${params.toString()}`;
 }
 
 function apiPath(path) {
@@ -548,7 +597,7 @@ function render(state, options = {}) {
   setText(elements.marketList, `Markets: ${snapshot.hypeMarkets.map((market) => market.coin).join(", ")}`);
   setText(
     elements.rangeInfo,
-    `Range: ${formatRangeHours(selectedHours)} | Step: ${selectedResolution.label} | Stored: ${formatStoredRange(lastState.history)} | Poll: ${formatSeconds(config.intervalMs)} | Price: live`,
+    `Range: ${formatRangeHours(selectedHours)} | Step: ${selectedResolution.label} | Loaded: ${formatHistoryResolution(config.historyResolutionSeconds)} | Stored: ${formatStoredRange(lastState.history)} | Poll: ${formatSeconds(config.intervalMs)} | Price: live`,
   );
 
   setSignedClass(elements.twap1h, snapshot.pressure.next1h);
@@ -931,6 +980,17 @@ function formatStoredRange(history) {
   const spanMs = history.at(-1).t - history[0].t;
   const hours = spanMs / (60 * 60 * 1000);
   return formatRangeHours(hours);
+}
+
+function formatHistoryResolution(seconds) {
+  const number = Number(seconds);
+  if (!Number.isFinite(number) || number <= 0) {
+    return "--";
+  }
+  if (number < 60) {
+    return `${number}s`;
+  }
+  return `${number / 60}m`;
 }
 
 function formatRangeHours(hours) {

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { AnalyticsStore, clientIp } from "./analytics-store.js";
 import { LiveDataService } from "./data-source.js";
 import { apiCorsHeaders } from "./cors.js";
-import { compactState, sseFrame } from "./events.js";
+import { compactState, historyPayload, sseFrame } from "./events.js";
 import { HistoryStore } from "./history-store.js";
 import { TelegramAlertBot } from "./telegram-alert-bot.js";
 
@@ -41,7 +41,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/snapshot") {
-      sendJson(res, service.getState());
+      sendJson(res, compactState(service.getState()));
+      return;
+    }
+
+    if (url.pathname === "/api/history") {
+      sendJson(res, historyPayload(service.getState(), historyQuery(url.searchParams)));
       return;
     }
 
@@ -153,6 +158,13 @@ function signalEventQuery(params) {
     limit: params.get("limit"),
     since: params.get("since"),
     status: params.get("status"),
+  };
+}
+
+function historyQuery(params) {
+  return {
+    hours: params.get("hours"),
+    resolutionSeconds: params.get("resolution"),
   };
 }
 

@@ -48,7 +48,7 @@ npm test
 
 ## What It Stores
 
-The app keeps a rolling 7 day history. Every second it saves the core chart values:
+The app keeps a rolling 14 day history. Every second it saves the core chart values:
 
 - `next1h` summed TWAP pressure
 - `next24h` summed TWAP pressure
@@ -76,7 +76,7 @@ Override it with:
 HISTORY_FILE=/path/to/history.ndjson npm start
 ```
 
-The browser loads the stored history once from `/api/snapshot`. After that it polls compact live state from `/api/state` once per second and appends one chart point per tick.
+The browser loads only the visible history window from `/api/history?hours=...&resolution=...`. Large windows are automatically compacted to a safe effective resolution so the API does not send the full two-week raw log to every browser. Live state is then polled from `/api/state` once per second and appended one chart point per tick.
 
 Request analytics are stored in SQLite:
 
