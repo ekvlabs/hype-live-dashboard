@@ -1,8 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { trimHistory } from "./history.js";
-
 export class HistoryStore {
   constructor(filePath) {
     this.filePath = filePath;
@@ -13,12 +11,24 @@ export class HistoryStore {
       return [];
     }
 
-    const points = readFileSync(this.filePath, "utf8")
-      .split("\n")
-      .map(parseLine)
-      .filter(Boolean);
-    const history = trimHistory(points, now, maxHistoryHours);
-    this.replace(history);
+    const cutoff = Number(now) - Math.max(1, Number(maxHistoryHours) || 336) * 60 * 60_000;
+    const history = [];
+    let shouldCompactFile = false;
+    forEachLine(readFileSync(this.filePath, "utf8"), (line) => {
+      const point = parseLine(line);
+      if (!point) {
+        shouldCompactFile = shouldCompactFile || Boolean(line.trim());
+        return;
+      }
+      if (Number(point.t) >= cutoff) {
+        history.push(point);
+      } else {
+        shouldCompactFile = true;
+      }
+    });
+    if (shouldCompactFile) {
+      this.replace(history);
+    }
     return history;
   }
 
@@ -44,6 +54,20 @@ export class HistoryStore {
 
   ensureDir() {
     mkdirSync(dirname(this.filePath), { recursive: true });
+  }
+}
+
+function forEachLine(content, callback) {
+  let start = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content.charCodeAt(index) !== 10) {
+      continue;
+    }
+    callback(content.slice(start, index));
+    start = index + 1;
+  }
+  if (start < content.length) {
+    callback(content.slice(start));
   }
 }
 

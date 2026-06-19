@@ -86,3 +86,9 @@ test("HistoryStore default load keeps two weeks", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("HistoryStore load avoids splitting the full history file into line arrays", async () => {
+  const source = await readFile(new URL("../src/history-store.js", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /\.split\(["'`]\\n["'`]\)/);
+});
