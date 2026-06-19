@@ -156,6 +156,51 @@ test("TWAP_DRIVER regime bars and markers align to the shared time axis", () => 
       },
     ],
   );
+
+  assert.deepEqual(
+    driverEventsToMarkers([
+      { id: "p1", openedAt: 25_000, side: "LONG", status: "PENDING" },
+      { id: "p2", openedAt: 30_000, side: "SHORT", status: "CANCELLED", closedAt: 35_000 },
+      { id: "p3", openedAt: 40_000, side: "LONG", status: "CONVERTED", closedAt: 45_000 },
+    ]),
+    [
+      {
+        time: 25,
+        position: "belowBar",
+        color: "#f5b84b",
+        shape: "square",
+        text: "PEND L",
+      },
+      {
+        time: 30,
+        position: "aboveBar",
+        color: "#f5b84b",
+        shape: "square",
+        text: "PEND S",
+      },
+      {
+        time: 35,
+        position: "aboveBar",
+        color: "#7c8a86",
+        shape: "circle",
+        text: "CANCEL",
+      },
+      {
+        time: 40,
+        position: "belowBar",
+        color: "#f5b84b",
+        shape: "square",
+        text: "PEND L",
+      },
+      {
+        time: 45,
+        position: "belowBar",
+        color: "#45d3c3",
+        shape: "circle",
+        text: "CONV",
+      },
+    ],
+  );
 });
 
 test("historyToLineData renders optional Hyperliquid perp fields by bucket close", () => {

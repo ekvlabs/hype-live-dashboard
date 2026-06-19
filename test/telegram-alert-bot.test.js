@@ -63,6 +63,84 @@ test("TelegramAlertBot sends only TWAP_DRIVER alerts", async () => {
   assert.equal(store.getUser(10).lastAlertAt, 60 * 60_000 + 1_000);
 });
 
+test("TelegramAlertBot stores PENDING_DRIVER when TWAP pressure is valid but price is chased", async () => {
+  const store = new BotStore(":memory:");
+  store.upsertUser({ chatId: 10, username: "eva", now: 1_000 });
+
+  const messages = [];
+  const bot = new TelegramAlertBot({
+    botToken: "token",
+    store,
+    cooldownMs: 1,
+    fetchFn: fakeTelegramFetch(messages),
+  });
+
+  await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 12_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(55 * 60_000 + 1_000, { price: 101, q1: 20_000, q24: 80_000 }));
+  await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 101, q1: 25_000, q24: 95_000, premium: 0 }));
+
+  assert.equal(messages.length, 0);
+  assert.deepEqual(
+    store.listSignalEvents({ limit: 5 }).map(({ side, status, phase, entryPrice }) => ({ side, status, phase, entryPrice })),
+    [{ side: "LONG", status: "PENDING", phase: "PENDING", entryPrice: 101 }],
+  );
+});
+
+test("TelegramAlertBot converts PENDING_DRIVER to ENTRY after short-term price cools while pressure remains aligned", async () => {
+  const store = new BotStore(":memory:");
+  store.upsertUser({ chatId: 10, username: "eva", now: 1_000 });
+
+  const messages = [];
+  const bot = new TelegramAlertBot({
+    botToken: "token",
+    store,
+    cooldownMs: 1,
+    fetchFn: fakeTelegramFetch(messages),
+  });
+
+  await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 12_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(55 * 60_000 + 1_000, { price: 101, q1: 20_000, q24: 80_000 }));
+  await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 101, q1: 25_000, q24: 95_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(65 * 60_000 + 2_000, { price: 101.02, q1: 26_000, q24: 100_000, premium: 0 }));
+
+  assert.equal(messages.filter((message) => /TWAP_DRIVER ENTRY LONG/.test(message.text)).length, 1);
+  assert.match(messages.at(-1).text, /Entry: \$101\.02/);
+  assert.deepEqual(
+    store.listSignalEvents({ limit: 5 }).map(({ side, status, phase, entryPrice }) => ({ side, status, phase, entryPrice })),
+    [
+      { side: "LONG", status: "OPEN", phase: "ACTIVE", entryPrice: 101.02 },
+      { side: "LONG", status: "CONVERTED", phase: "FINAL_EXIT", entryPrice: 101 },
+    ],
+  );
+});
+
+test("TelegramAlertBot cancels stale PENDING_DRIVER without sending a trade alert", async () => {
+  const store = new BotStore(":memory:");
+  store.upsertUser({ chatId: 10, username: "eva", now: 1_000 });
+
+  const messages = [];
+  const bot = new TelegramAlertBot({
+    botToken: "token",
+    store,
+    cooldownMs: 1,
+    fetchFn: fakeTelegramFetch(messages),
+  });
+
+  await bot.handleSnapshot(snapshotAt(1_000, { price: 100, q1: 10_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(5 * 60_000 + 1_000, { price: 100, q1: 12_000, q24: 10_000 }));
+  await bot.handleSnapshot(snapshotAt(55 * 60_000 + 1_000, { price: 101, q1: 20_000, q24: 80_000 }));
+  await bot.handleSnapshot(snapshotAt(60 * 60_000 + 1_000, { price: 101, q1: 25_000, q24: 95_000, premium: 0 }));
+  await bot.handleSnapshot(snapshotAt(71 * 60_000 + 2_000, { price: 101.5, q1: 1_000, q24: 30_000, premium: 0 }));
+
+  assert.equal(messages.length, 0);
+  assert.deepEqual(
+    store.listSignalEvents({ limit: 5 }).map(({ side, status, phase, exitReason }) => ({ side, status, phase, exitReason })),
+    [{ side: "LONG", status: "CANCELLED", phase: "FINAL_EXIT", exitReason: "PENDING_TIMEOUT" }],
+  );
+});
+
 test("TelegramAlertBot treats repeated same-side TWAP_DRIVER hits as one managed regime", async () => {
   const store = new BotStore(":memory:");
   store.upsertUser({ chatId: 10, username: "eva", now: 1_000 });

@@ -124,6 +124,50 @@ test("BotStore persists TWAP_DRIVER signal events and stats", () => {
   assert.deepEqual(store.listOpenSignals(), []);
 });
 
+test("BotStore keeps PENDING_DRIVER events public but out of trade stats", () => {
+  const store = new BotStore(":memory:");
+
+  store.recordSignalOpened({
+    id: "pending-1",
+    openedAt: 1_000,
+    side: 1,
+    entryPrice: 100,
+    expiresAt: 2_000,
+    status: "PENDING",
+    phase: "PENDING",
+  });
+
+  assert.deepEqual(store.signalStats(), {
+    total: 0,
+    open: 0,
+    tp: 0,
+    sl: 0,
+    time: 0,
+    netTakerBp: 0,
+    netMakerBp: 0,
+  });
+  assert.deepEqual(store.listPendingSignals().map(({ id, phase, entryPrice }) => ({ id, phase, entryPrice })), [
+    { id: "pending-1", phase: "PENDING", entryPrice: 100 },
+  ]);
+  assert.deepEqual(store.listSignalEvents({ status: "PENDING", limit: 10 }).map(({ id, status, phase }) => ({ id, status, phase })), [
+    { id: "pending-1", status: "PENDING", phase: "PENDING" },
+  ]);
+
+  store.recordPendingClosed({
+    id: "pending-1",
+    outcome: "CANCELLED",
+    closedAt: 1_500,
+    exitReason: "PENDING_TIMEOUT",
+  });
+
+  assert.deepEqual(store.listPendingSignals(), []);
+  assert.deepEqual(
+    store.listSignalEvents({ limit: 10 }).map(({ id, status, phase, exitReason, moveBp }) => ({ id, status, phase, exitReason, moveBp })),
+    [{ id: "pending-1", status: "CANCELLED", phase: "FINAL_EXIT", exitReason: "PENDING_TIMEOUT", moveBp: 0 }],
+  );
+  assert.equal(store.signalStats().total, 0);
+});
+
 test("BotStore lists sanitized TWAP_DRIVER signal events for public charts", () => {
   const store = new BotStore(":memory:");
   store.upsertUser({ chatId: 123, username: "private_user", firstName: "Private", now: 500 });

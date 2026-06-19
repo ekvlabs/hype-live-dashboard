@@ -150,6 +150,7 @@ export class BotStore {
     side,
     entryPrice,
     expiresAt,
+    status = "OPEN",
     entryQ1 = null,
     entryQ24 = null,
     entryDq24 = null,
@@ -190,7 +191,7 @@ export class BotStore {
           last_aligned_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, 'OPEN', 1, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, 0, 0, NULL, '', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, 0, 0, NULL, '', ?, ?)
       `)
       .run(
         id,
@@ -198,6 +199,7 @@ export class BotStore {
         Number(side),
         Number(entryPrice),
         Number(expiresAt),
+        String(status || "OPEN").toUpperCase(),
         Number(openedAt),
         Number(lastNoticeAt),
         nullableSqlNumber(entryQ1),
@@ -324,6 +326,25 @@ export class BotStore {
       );
   }
 
+  recordPendingClosed({ id, outcome, closedAt, exitReason = "" }) {
+    this.db
+      .prepare(`
+        UPDATE telegram_signal_events
+        SET
+          status = ?,
+          move_bp = 0,
+          net_taker_bp = 0,
+          net_maker_bp = 0,
+          closed_at = ?,
+          phase = 'FINAL_EXIT',
+          phase_updated_at = ?,
+          exit_reason = ?,
+          updated_at = ?
+        WHERE id = ? AND status = 'PENDING'
+      `)
+      .run(String(outcome).toUpperCase(), Number(closedAt), Number(closedAt), String(exitReason || ""), Number(closedAt), id);
+  }
+
   listOpenSignals() {
     return this.db
       .prepare(`
@@ -336,13 +357,25 @@ export class BotStore {
       .map(mapSignalEvent);
   }
 
+  listPendingSignals() {
+    return this.db
+      .prepare(`
+        SELECT *
+        FROM telegram_signal_events
+        WHERE status = 'PENDING'
+        ORDER BY opened_at
+      `)
+      .all()
+      .map(mapSignalEvent);
+  }
+
   listSignalEvents({ limit = 100, since = 0, status = "" } = {}) {
-    const safeLimit = Math.min(250, Math.max(1, Number(limit) || 100));
+    const safeLimit = Math.min(2_000, Math.max(1, Number(limit) || 100));
     const safeSince = Math.max(0, Number(since) || 0);
     const safeStatus = String(status ?? "").trim().toUpperCase();
     const where = ["opened_at >= ?"];
     const values = [safeSince];
-    if (["OPEN", "TP", "SL", "TIME", "OPPOSITE"].includes(safeStatus)) {
+    if (["OPEN", "TP", "SL", "TIME", "OPPOSITE", "PENDING", "CONVERTED", "CANCELLED"].includes(safeStatus)) {
       where.push("status = ?");
       values.push(safeStatus);
     }
@@ -372,6 +405,7 @@ export class BotStore {
           SUM(COALESCE(net_taker_bp, 0)) AS net_taker_bp,
           SUM(COALESCE(net_maker_bp, 0)) AS net_maker_bp
         FROM telegram_signal_events
+        WHERE status IN ('OPEN', 'TP', 'SL', 'TIME', 'OPPOSITE')
       `)
       .get();
     return {

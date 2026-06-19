@@ -12,7 +12,7 @@ import {
   shouldKeepLiveFollowing,
   upsertAlignedLineDataPoint,
   upsertAlignedPriceBarData,
-} from "./chart-data.js?v=21";
+} from "./chart-data.js?v=22";
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;
@@ -491,7 +491,7 @@ async function fetchLiveState() {
 }
 
 async function fetchDriverSignalEvents() {
-  const response = await fetch(apiPath("/api/twap-driver/signals") + "?limit=250", { cache: "no-store" });
+  const response = await fetch(apiPath("/api/twap-driver/signals") + "?limit=2000", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`signals ${response.status}`);
   }

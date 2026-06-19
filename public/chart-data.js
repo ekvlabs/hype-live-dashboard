@@ -11,6 +11,8 @@ export const DRIVER_LONG_COLOR = "#10b437";
 export const DRIVER_SHORT_COLOR = "#e34b4b";
 export const DRIVER_EXIT_COLOR = "#45d3c3";
 export const DRIVER_FADE_COLOR = "#f5b84b";
+export const DRIVER_PENDING_COLOR = "#f5b84b";
+export const DRIVER_CANCEL_COLOR = "#7c8a86";
 export const DRIVER_NEUTRAL_COLOR = "rgba(69, 211, 195, 0.18)";
 export const DEFAULT_MIN_BAR_SPACING = 0.5;
 export const ABSOLUTE_MIN_BAR_SPACING = 0.02;
@@ -129,6 +131,34 @@ export function driverEventsToMarkers(events) {
   for (const event of events ?? []) {
     const openedTime = toUnixSeconds(event?.openedAt);
     const side = String(event?.side ?? "").toUpperCase();
+    const status = String(event?.status ?? "").toUpperCase();
+    const pendingStatus = ["PENDING", "CONVERTED", "CANCELLED"].includes(status);
+    if (pendingStatus) {
+      if (Number.isFinite(openedTime) && !seen.has(`${event.id}:pending`)) {
+        seen.add(`${event.id}:pending`);
+        markers.push({
+          time: openedTime,
+          position: side === "SHORT" ? "aboveBar" : "belowBar",
+          color: DRIVER_PENDING_COLOR,
+          shape: "square",
+          text: side === "SHORT" ? "PEND S" : "PEND L",
+        });
+      }
+
+      const pendingClosedTime = toUnixSeconds(event?.closedAt);
+      if (Number.isFinite(pendingClosedTime) && pendingClosedTime > 0 && !seen.has(`${event.id}:pending-close`)) {
+        seen.add(`${event.id}:pending-close`);
+        markers.push({
+          time: pendingClosedTime,
+          position: status === "CANCELLED" ? "aboveBar" : "belowBar",
+          color: status === "CANCELLED" ? DRIVER_CANCEL_COLOR : DRIVER_EXIT_COLOR,
+          shape: "circle",
+          text: status === "CANCELLED" ? "CANCEL" : "CONV",
+        });
+      }
+      continue;
+    }
+
     if (Number.isFinite(openedTime) && !seen.has(`${event.id}:open`)) {
       seen.add(`${event.id}:open`);
       markers.push({
@@ -164,7 +194,6 @@ export function driverEventsToMarkers(events) {
       });
     }
 
-    const status = String(event?.status ?? "").toUpperCase();
     const closedTime = toUnixSeconds(event?.closedAt);
     if (Number.isFinite(closedTime) && status && status !== "OPEN" && !seen.has(`${event.id}:close`)) {
       seen.add(`${event.id}:close`);

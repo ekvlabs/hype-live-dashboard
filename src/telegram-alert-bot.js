@@ -12,6 +12,12 @@ const DRIVER_PRICE_SHORT_LOOKBACK_MS = 5 * 60 * 1_000;
 const DRIVER_MIN_MONO = 0.65;
 const DRIVER_MAX_PRICE_5M_BP = 10;
 const DRIVER_MAX_PRICE_60M_BP = 80;
+const DRIVER_PENDING_GRACE_MS = 10 * 60 * 1_000;
+const DRIVER_PENDING_MAX_PRICE_5M_BP = 30;
+const DRIVER_PENDING_MAX_PRICE_60M_BP = 120;
+const DRIVER_PENDING_ENTRY_PRICE_5M_BP = DRIVER_MAX_PRICE_5M_BP;
+const DRIVER_PENDING_ENTRY_PRICE_60M_BP = DRIVER_PENDING_MAX_PRICE_60M_BP;
+const DRIVER_PENDING_FADE_Q24_MULTIPLIER = 0.45;
 const DRIVER_MAX_PREMIUM_BP = 8;
 const DRIVER_STOP_BP = 20;
 const DRIVER_BREAKEVEN_BP = 30;
@@ -45,6 +51,7 @@ export class TelegramAlertBot {
     this.offset = 0;
     this.samples = [];
     this.openSignals = this.store?.listOpenSignals?.() ?? [];
+    this.pendingSignals = this.store?.listPendingSignals?.() ?? [];
     this.pollTimer = null;
     this.polling = false;
     this.pollAbortController = null;
@@ -243,13 +250,22 @@ export class TelegramAlertBot {
       return true;
     }
 
-    const signal = detectTwapDriverSignal(this.samples, sample);
+    const candidate = detectTwapDriverCandidate(this.samples, sample);
+    const signal = candidate?.priceEligible ? candidate : null;
     const activeSignal = this.activeSignal();
     if (activeSignal) {
       return this.handleActiveRegime(activeSignal, signal, sample);
     }
 
+    const pendingSignal = this.activePendingSignal();
+    if (pendingSignal) {
+      return this.handlePendingRegime(pendingSignal, candidate, signal, sample);
+    }
+
     if (!signal) {
+      if (shouldOpenPendingSignal(candidate)) {
+        this.trackPendingSignal(candidate, sample);
+      }
       return false;
     }
 
@@ -274,6 +290,10 @@ export class TelegramAlertBot {
 
   activeSignal() {
     return this.openSignals.find((signal) => !signal.closedAt) ?? null;
+  }
+
+  activePendingSignal() {
+    return this.pendingSignals.find((signal) => !signal.closedAt) ?? null;
   }
 
   async openRegime(signal, sample) {
@@ -328,6 +348,51 @@ export class TelegramAlertBot {
     return tracked;
   }
 
+  trackPendingSignal(signal, sample) {
+    const tracked = {
+      id: `${sample.t}:${signal.side}:pending`,
+      side: signal.side,
+      sideLabel: signal.sideLabel,
+      entryPrice: sample.price,
+      openedAt: sample.t,
+      expiresAt: sample.t + DRIVER_PENDING_GRACE_MS,
+      hitCount: 1,
+      lastHitAt: sample.t,
+      lastNoticeAt: sample.t,
+      mfeBp: 0,
+      maeBp: 0,
+      entryQ1: signal.q1,
+      entryQ24: signal.q24,
+      entryDq24: signal.dq24,
+      lastQ1: signal.q1,
+      lastQ24: signal.q24,
+      lastDq24: signal.dq24,
+      fadeNotifiedAt: 0,
+      phase: "PENDING",
+      phaseUpdatedAt: sample.t,
+      tp1HitAt: 0,
+      breakevenHitAt: 0,
+      runnerStartedAt: 0,
+      weakNotifiedAt: 0,
+      trailStopBp: null,
+      exitReason: "",
+      lastAlignedAt: sample.t,
+    };
+    this.pendingSignals.push(tracked);
+    this.store?.recordSignalOpened?.({
+      ...tracked,
+      status: "PENDING",
+      entryQ1: signal.q1,
+      entryQ24: signal.q24,
+      entryDq24: signal.dq24,
+      lastNoticeAt: sample.t,
+      phase: "PENDING",
+      phaseUpdatedAt: sample.t,
+      lastAlignedAt: sample.t,
+    });
+    return tracked;
+  }
+
   async handleActiveRegime(activeSignal, signal, sample) {
     if (signal && signal.side !== activeSignal.side) {
       const moveBp = priceMoveBp(activeSignal.entryPrice, sample.price, activeSignal.side);
@@ -367,6 +432,54 @@ export class TelegramAlertBot {
     }
 
     return false;
+  }
+
+  async handlePendingRegime(pendingSignal, candidate, signal, sample) {
+    if (sample.t >= Number(pendingSignal.expiresAt)) {
+      this.closePendingSignal(pendingSignal, "CANCELLED", sample.t, "PENDING_TIMEOUT");
+      this.pendingSignals = this.pendingSignals.filter((tracked) => !tracked.closedAt);
+      return false;
+    }
+
+    if (candidate && candidate.side === pendingSignal.side) {
+      updatePendingProgress(pendingSignal, candidate, sample);
+      if (signal || shouldConvertPendingSignal(candidate)) {
+        this.closePendingSignal(pendingSignal, "CONVERTED", sample.t, "PENDING_CONVERTED");
+        this.pendingSignals = this.pendingSignals.filter((tracked) => !tracked.closedAt);
+        return this.openRegime(candidate, sample);
+      }
+    }
+
+    if (candidate && candidate.side !== pendingSignal.side) {
+      this.closePendingSignal(pendingSignal, "CANCELLED", sample.t, "PENDING_OPPOSITE");
+      this.pendingSignals = this.pendingSignals.filter((tracked) => !tracked.closedAt);
+      if (signal) {
+        return this.openRegime(signal, sample);
+      }
+      if (shouldOpenPendingSignal(candidate)) {
+        this.trackPendingSignal(candidate, sample);
+      }
+      return false;
+    }
+
+    if (shouldCancelPendingPressure(pendingSignal, sample)) {
+      this.closePendingSignal(pendingSignal, "CANCELLED", sample.t, "PENDING_FADE");
+      this.pendingSignals = this.pendingSignals.filter((tracked) => !tracked.closedAt);
+    }
+
+    return false;
+  }
+
+  closePendingSignal(signal, outcome, closedAt, exitReason = "") {
+    signal.closedAt = closedAt;
+    signal.exitReason = exitReason;
+    signal.phase = "FINAL_EXIT";
+    this.store?.recordPendingClosed?.({
+      id: signal.id,
+      outcome,
+      closedAt,
+      exitReason,
+    });
   }
 
   async updateSignalOutcomes(sample) {
@@ -551,6 +664,11 @@ function signalDescriptionText(dashboardUrl = DEFAULT_DASHBOARD_URL) {
     "mono24 >= 0.65",
     "premium not overheated",
     "",
+    "PENDING_DRIVER:",
+    "If a large TWAP arrives after price has already started moving, the dashboard marks it as pending for 10m.",
+    "Pending is converted to ENTRY only if short-term price cools while TWAP pressure remains aligned.",
+    "Pending markers are chart context only; Telegram alerts are sent only after a real ENTRY.",
+    "",
     "Lifecycle:",
     "ENTRY -> ACTIVE by default",
     `hard SL ${DRIVER_STOP_BP}bp`,
@@ -657,7 +775,7 @@ function latestHistoryTimestamp(history) {
   return NaN;
 }
 
-function detectTwapDriverSignal(samples, current) {
+function detectTwapDriverCandidate(samples, current) {
   const previous60m = sampleAtOrBefore(samples, current.t - DRIVER_LOOKBACK_MS);
   const previous5m = sampleAtOrBefore(samples, current.t - DRIVER_PRICE_SHORT_LOOKBACK_MS);
   if (!previous60m || !previous5m) {
@@ -676,9 +794,7 @@ function detectTwapDriverSignal(samples, current) {
 
   const priceRet5mBp = priceMoveBp(previous5m.price, current.price, 1);
   const priceRet60mBp = priceMoveBp(previous60m.price, current.price, 1);
-  if (side * priceRet5mBp >= DRIVER_MAX_PRICE_5M_BP || side * priceRet60mBp >= DRIVER_MAX_PRICE_60M_BP) {
-    return null;
-  }
+  const priceEligible = side * priceRet5mBp < DRIVER_MAX_PRICE_5M_BP && side * priceRet60mBp < DRIVER_MAX_PRICE_60M_BP;
 
   const mono24 = monotonicity(samples, previous60m.t, current.t, current.q24 - previous60m.q24);
   if (!Number.isFinite(mono24) || mono24 < DRIVER_MIN_MONO) {
@@ -700,7 +816,48 @@ function detectTwapDriverSignal(samples, current) {
     priceRet5mBp,
     priceRet60mBp,
     premiumBp,
+    priceEligible,
   };
+}
+
+function shouldOpenPendingSignal(candidate) {
+  if (!candidate || candidate.priceEligible) {
+    return false;
+  }
+  return (
+    candidate.side * candidate.priceRet5mBp < DRIVER_PENDING_MAX_PRICE_5M_BP &&
+    candidate.side * candidate.priceRet60mBp < DRIVER_PENDING_MAX_PRICE_60M_BP
+  );
+}
+
+function shouldConvertPendingSignal(candidate) {
+  if (!candidate) {
+    return false;
+  }
+  return (
+    candidate.side * candidate.priceRet5mBp < DRIVER_PENDING_ENTRY_PRICE_5M_BP &&
+    candidate.side * candidate.priceRet60mBp < DRIVER_PENDING_ENTRY_PRICE_60M_BP
+  );
+}
+
+function updatePendingProgress(pendingSignal, candidate, sample) {
+  pendingSignal.hitCount = (Number(pendingSignal.hitCount) || 1) + 1;
+  pendingSignal.lastHitAt = sample.t;
+  pendingSignal.lastQ1 = candidate.q1;
+  pendingSignal.lastQ24 = candidate.q24;
+  pendingSignal.lastDq24 = candidate.dq24;
+  if (candidate.side * sample.q24 > 0) {
+    pendingSignal.lastAlignedAt = sample.t;
+  }
+}
+
+function shouldCancelPendingPressure(pendingSignal, sample) {
+  const side = Number(pendingSignal.side);
+  if (side * Number(sample.q1) <= 0 || side * Number(sample.q24) <= 0) {
+    return true;
+  }
+  const entryQ24 = Math.max(1, Math.abs(Number(pendingSignal.entryQ24) || 0));
+  return Math.abs(Number(sample.q24) || 0) <= entryQ24 * DRIVER_PENDING_FADE_Q24_MULTIPLIER;
 }
 
 function sampleAtOrBefore(samples, timestamp) {
