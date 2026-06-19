@@ -10,6 +10,7 @@ import { apiCorsHeaders } from "./cors.js";
 import { compactState, historyPayload, sseFrame } from "./events.js";
 import { HistoryStore } from "./history-store.js";
 import { TelegramAlertBot } from "./telegram-alert-bot.js";
+import { twapDriverSignalEventsPayload } from "./twap-driver-research-events.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = join(__dirname, "..");
@@ -69,7 +70,15 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/twap-driver/signals") {
-      sendJson(res, telegramBot.signalEvents(signalEventQuery(url.searchParams)));
+      const query = signalEventQuery(url.searchParams);
+      sendJson(
+        res,
+        twapDriverSignalEventsPayload({
+          livePayload: telegramBot.signalEvents(query),
+          history: service.getState().history,
+          options: query,
+        }),
+      );
       return;
     }
 
