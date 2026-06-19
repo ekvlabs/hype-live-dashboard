@@ -1,4 +1,4 @@
-export const DEFAULT_HISTORY_MAX_POINTS = 100_000;
+export const DEFAULT_HISTORY_MAX_POINTS = 30_000;
 const HISTORY_RESOLUTION_STEPS_SECONDS = [1, 5, 15, 60, 300, 900, 1800, 3600];
 
 export function compactState(state) {
