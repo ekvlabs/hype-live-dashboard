@@ -15,7 +15,7 @@ import {
   upsertAlignedLineDataPoint,
   upsertAlignedPriceBarData,
   visibleTimeRangeForDriverEvents,
-} from "./chart-data.js?v=25";
+} from "./chart-data.js?v=26";
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;
@@ -183,7 +183,7 @@ function createChartEntry(definition) {
       },
     });
   }
-  const markers = typeof createSeriesMarkers === "function" ? createSeriesMarkers(series, []) : null;
+  const markers = typeof createSeriesMarkers === "function" ? createSeriesMarkers(series, [], { zOrder: "aboveSeries" }) : null;
   const extraSeries = (definition.extraLines ?? []).map((line) => ({
     ...line,
     series: chart.addSeries(LineSeries, {
@@ -282,6 +282,7 @@ function wireRangeControls() {
     button.addEventListener("click", () => {
       setSelectedHistoryRange(Number(button.dataset.range) || DEFAULT_RANGE_HOURS);
       isLiveFollowing = true;
+      focusDriverMarkersOnNextRender = showDriverMarkers;
       loadHistory({ forceRange: true });
     });
   }
@@ -296,6 +297,7 @@ function wireResolutionControls() {
         item.classList.toggle("active", item === button);
       }
       isLiveFollowing = true;
+      focusDriverMarkersOnNextRender = showDriverMarkers;
       applyTimeScaleDensity();
       loadHistory({ forceRange: true });
     });
@@ -675,7 +677,7 @@ function render(state, options = {}) {
     setChartData(history);
   }
 
-  if (focusDriverMarkersOnNextRender && showDriverMarkers && applyDriverMarkerVisibleWindow(lastState.driverEvents ?? [])) {
+  if (showDriverMarkers && applyDriverMarkerVisibleWindow(lastState.driverEvents ?? [])) {
     focusDriverMarkersOnNextRender = false;
     hasAppliedInitialRange = true;
   } else if (options.forceRange || !hasAppliedInitialRange) {
