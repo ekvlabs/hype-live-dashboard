@@ -13,7 +13,8 @@ import {
   shouldKeepLiveFollowing,
   upsertAlignedLineDataPoint,
   upsertAlignedPriceBarData,
-} from "./chart-data.js?v=23";
+  visibleTimeRangeForDriverEvents,
+} from "./chart-data.js?v=24";
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;
@@ -142,6 +143,7 @@ let isSyncingRange = false;
 let isSyncingCrosshair = false;
 let ignoreRangeEventsUntil = 0;
 let showDriverMarkers = Boolean(elements.showDriverMarkers?.checked);
+let focusDriverMarkersOnNextRender = false;
 
 configureAlertBotLink();
 recordVisit();
@@ -302,10 +304,15 @@ function wireResolutionControls() {
 function wireDriverMarkerToggle() {
   elements.showDriverMarkers?.addEventListener("change", () => {
     showDriverMarkers = Boolean(elements.showDriverMarkers.checked);
+    focusDriverMarkersOnNextRender = showDriverMarkers;
     if (showDriverMarkers && expandHistoryRangeForDriverMarkers(lastState?.driverEvents ?? [])) {
       return;
     }
     setDriverMarkers(lastState?.driverEvents ?? []);
+    if (showDriverMarkers) {
+      focusDriverMarkersOnNextRender = false;
+      applyDriverMarkerVisibleWindow(lastState?.driverEvents ?? []);
+    }
   });
 }
 
@@ -333,6 +340,22 @@ function expandHistoryRangeForDriverMarkers(events) {
   setSelectedHistoryRange(nextRange);
   isLiveFollowing = true;
   loadHistory({ forceRange: true });
+  return true;
+}
+
+function applyDriverMarkerVisibleWindow(events) {
+  const range = visibleTimeRangeForDriverEvents(events);
+  if (!range) {
+    return false;
+  }
+
+  withProgrammaticRangeUpdate(() => {
+    for (const entry of chartEntries) {
+      entry.chart.timeScale().setVisibleRange(range);
+    }
+  });
+  isLiveFollowing = false;
+  autoScaleAllVertical();
   return true;
 }
 
@@ -651,7 +674,10 @@ function render(state, options = {}) {
     setChartData(history);
   }
 
-  if (options.forceRange || !hasAppliedInitialRange) {
+  if (focusDriverMarkersOnNextRender && showDriverMarkers && applyDriverMarkerVisibleWindow(lastState.driverEvents ?? [])) {
+    focusDriverMarkersOnNextRender = false;
+    hasAppliedInitialRange = true;
+  } else if (options.forceRange || !hasAppliedInitialRange) {
     applyVisibleTimeWindow(history);
     hasAppliedInitialRange = true;
   } else if (options.followLive) {

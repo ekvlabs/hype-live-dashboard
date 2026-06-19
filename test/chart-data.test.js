@@ -24,6 +24,7 @@ import {
   upsertAlignedLineDataPoint,
   upsertAlignedPriceBarData,
   upsertPriceBarData,
+  visibleTimeRangeForDriverEvents,
   visibleDataRange,
 } from "../public/chart-data.js";
 
@@ -229,6 +230,20 @@ test("requiredHistoryHoursForDriverEvents covers all stored signal markers", () 
     3,
   );
   assert.equal(requiredHistoryHoursForDriverEvents([], 3 * 60 * 60), null);
+});
+
+test("visibleTimeRangeForDriverEvents focuses around all stored signal markers", () => {
+  assert.deepEqual(
+    visibleTimeRangeForDriverEvents(
+      [
+        { openedAt: 60_000, side: "LONG", status: "OPEN" },
+        { openedAt: 5 * 60_000, closedAt: 10 * 60_000, side: "LONG", status: "TP" },
+      ],
+      120,
+    ),
+    { from: -60, to: 720 },
+  );
+  assert.equal(visibleTimeRangeForDriverEvents([], 120), null);
 });
 
 test("historyToAlignedLineData preserves sparse indicator time buckets with whitespace points", () => {

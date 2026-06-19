@@ -237,6 +237,31 @@ export function requiredHistoryHoursForDriverEvents(events, anchorUnixSeconds) {
   return Math.max(1, Math.ceil((anchor - earliest) / 3600));
 }
 
+export function visibleTimeRangeForDriverEvents(events, paddingSeconds = 30 * 60) {
+  let from = Infinity;
+  let to = -Infinity;
+
+  for (const event of events ?? []) {
+    for (const key of ["openedAt", "closedAt", "tp1HitAt", "fadeNotifiedAt"]) {
+      const time = toUnixSeconds(event?.[key]);
+      if (Number.isFinite(time) && time > 0) {
+        from = Math.min(from, time);
+        to = Math.max(to, time);
+      }
+    }
+  }
+
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    return null;
+  }
+
+  const padding = Math.max(60, Number(paddingSeconds) || 0);
+  return {
+    from: from - padding,
+    to: to + padding,
+  };
+}
+
 export function visibleDataRange(data, timeRange = null) {
   let min = Infinity;
   let max = -Infinity;
