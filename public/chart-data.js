@@ -262,6 +262,33 @@ export function visibleTimeRangeForDriverEvents(events, paddingSeconds = 30 * 60
   };
 }
 
+export function snapMarkersToSeriesData(markers, seriesData, maxDistanceSeconds = Infinity) {
+  const times = [...new Set((seriesData ?? []).map((point) => Number(point?.time)).filter(Number.isFinite))].sort(
+    (a, b) => a - b,
+  );
+  if (!times.length) {
+    return [];
+  }
+
+  const maxDistance = Math.max(0, Number(maxDistanceSeconds));
+  return (markers ?? [])
+    .map((marker) => {
+      const time = Number(marker?.time);
+      if (!Number.isFinite(time) || time < times[0] || time > times.at(-1)) {
+        return null;
+      }
+      const snappedTime = nearestTime(times, time);
+      if (Math.abs(snappedTime - time) > maxDistance) {
+        return null;
+      }
+      return {
+        ...marker,
+        time: snappedTime,
+      };
+    })
+    .filter(Boolean);
+}
+
 export function visibleDataRange(data, timeRange = null) {
   let min = Infinity;
   let max = -Infinity;
@@ -283,6 +310,27 @@ export function visibleDataRange(data, timeRange = null) {
   }
 
   return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
+}
+
+function nearestTime(sortedTimes, time) {
+  let low = 0;
+  let high = sortedTimes.length - 1;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const value = sortedTimes[mid];
+    if (value === time) {
+      return value;
+    }
+    if (value < time) {
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  const before = sortedTimes[Math.max(0, high)];
+  const after = sortedTimes[Math.min(sortedTimes.length - 1, low)];
+  return Math.abs(time - before) <= Math.abs(after - time) ? before : after;
 }
 
 export function needsVerticalAutoscale(data, priceRange, timeRange = null) {

@@ -11,10 +11,11 @@ import {
   requiredHistoryHoursForDriverEvents,
   selectedHistoryWindow,
   shouldKeepLiveFollowing,
+  snapMarkersToSeriesData,
   upsertAlignedLineDataPoint,
   upsertAlignedPriceBarData,
   visibleTimeRangeForDriverEvents,
-} from "./chart-data.js?v=24";
+} from "./chart-data.js?v=25";
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;
@@ -143,7 +144,7 @@ let isSyncingRange = false;
 let isSyncingCrosshair = false;
 let ignoreRangeEventsUntil = 0;
 let showDriverMarkers = Boolean(elements.showDriverMarkers?.checked);
-let focusDriverMarkersOnNextRender = false;
+let focusDriverMarkersOnNextRender = showDriverMarkers;
 
 configureAlertBotLink();
 recordVisit();
@@ -821,14 +822,20 @@ function setDriverMarkers(events) {
         time: alignTimeToResolution(marker.time),
       }))
     : [];
+  const priceEntry = chartEntries.find((entry) => entry.id === "price");
+  const priceMarkers = snapMarkersToSeriesData(markers, priceEntry?.data ?? [], markerSnapToleranceSeconds());
   for (const entry of chartEntries) {
-    const entryMarkers = entry.id === "price" ? markers : [];
+    const entryMarkers = entry.id === "price" ? priceMarkers : [];
     if (entry.markers?.setMarkers) {
       entry.markers.setMarkers(entryMarkers);
     } else if (typeof entry.series.setMarkers === "function") {
       entry.series.setMarkers(entryMarkers);
     }
   }
+}
+
+function markerSnapToleranceSeconds() {
+  return Math.max(60, selectedResolution.seconds * 3);
 }
 
 function alignTimeToResolution(time) {

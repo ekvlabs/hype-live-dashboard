@@ -19,6 +19,7 @@ import {
   selectedHistoryWindow,
   shouldFollowLiveRange,
   shouldKeepLiveFollowing,
+  snapMarkersToSeriesData,
   upsertAlignedRegimeBarData,
   upsertLineDataPoint,
   upsertAlignedLineDataPoint,
@@ -244,6 +245,24 @@ test("visibleTimeRangeForDriverEvents focuses around all stored signal markers",
     { from: -60, to: 720 },
   );
   assert.equal(visibleTimeRangeForDriverEvents([], 120), null);
+});
+
+test("snapMarkersToSeriesData pins marker times to actual rendered bars", () => {
+  assert.deepEqual(
+    snapMarkersToSeriesData(
+      [
+        { time: 101, position: "belowBar", color: "#10b437", shape: "arrowUp" },
+        { time: 109, position: "aboveBar", color: "#e34b4b", shape: "circle" },
+        { time: 200, position: "belowBar", color: "#45d3c3", shape: "circle" },
+      ],
+      [{ time: 100 }, { time: 105 }, { time: 110 }],
+      5,
+    ),
+    [
+      { time: 100, position: "belowBar", color: "#10b437", shape: "arrowUp" },
+      { time: 110, position: "aboveBar", color: "#e34b4b", shape: "circle" },
+    ],
+  );
 });
 
 test("historyToAlignedLineData preserves sparse indicator time buckets with whitespace points", () => {
