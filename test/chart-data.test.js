@@ -15,6 +15,7 @@ import {
   nextLiveVisibleRange,
   normalizedHistory,
   pruneSeriesData,
+  requiredHistoryHoursForDriverEvents,
   selectedHistoryWindow,
   shouldFollowLiveRange,
   shouldKeepLiveFollowing,
@@ -214,6 +215,20 @@ test("historyToLineData renders optional Hyperliquid perp fields by bucket close
     { time: 10, value: -0.00002, color: NEGATIVE_TWAP_COLOR },
     { time: 15, value: 0.00003, color: "#45d3c3" },
   ]);
+});
+
+test("requiredHistoryHoursForDriverEvents covers all stored signal markers", () => {
+  assert.equal(
+    requiredHistoryHoursForDriverEvents(
+      [
+        { openedAt: 1_000, side: "LONG", status: "OPEN" },
+        { openedAt: 60 * 60_000, closedAt: 90 * 60_000, side: "LONG", status: "TP" },
+      ],
+      3 * 60 * 60,
+    ),
+    3,
+  );
+  assert.equal(requiredHistoryHoursForDriverEvents([], 3 * 60 * 60), null);
 });
 
 test("historyToAlignedLineData preserves sparse indicator time buckets with whitespace points", () => {

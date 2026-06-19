@@ -214,6 +214,29 @@ export function driverEventsToCompactMarkers(events) {
   return driverEventsToMarkers(events).map(({ text: _text, ...marker }) => marker);
 }
 
+export function requiredHistoryHoursForDriverEvents(events, anchorUnixSeconds) {
+  const anchor = Number(anchorUnixSeconds);
+  if (!Number.isFinite(anchor)) {
+    return null;
+  }
+
+  let earliest = Infinity;
+  for (const event of events ?? []) {
+    for (const key of ["openedAt", "closedAt", "tp1HitAt", "fadeNotifiedAt"]) {
+      const time = toUnixSeconds(event?.[key]);
+      if (Number.isFinite(time) && time > 0) {
+        earliest = Math.min(earliest, time);
+      }
+    }
+  }
+
+  if (!Number.isFinite(earliest)) {
+    return null;
+  }
+
+  return Math.max(1, Math.ceil((anchor - earliest) / 3600));
+}
+
 export function visibleDataRange(data, timeRange = null) {
   let min = Infinity;
   let max = -Infinity;

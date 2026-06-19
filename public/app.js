@@ -8,11 +8,12 @@ import {
   nextLiveVisibleRange,
   normalizedHistory,
   pruneSeriesData,
+  requiredHistoryHoursForDriverEvents,
   selectedHistoryWindow,
   shouldKeepLiveFollowing,
   upsertAlignedLineDataPoint,
   upsertAlignedPriceBarData,
-} from "./chart-data.js?v=22";
+} from "./chart-data.js?v=23";
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;
@@ -276,12 +277,8 @@ function chartOptions(container, height = CHART_HEIGHT) {
 function wireRangeControls() {
   for (const button of elements.rangeButtons.filter((item) => item.dataset.range)) {
     button.addEventListener("click", () => {
-      selectedHours = Number(button.dataset.range) || DEFAULT_RANGE_HOURS;
-      for (const item of elements.rangeButtons.filter((item) => item.dataset.range)) {
-        item.classList.toggle("active", item === button);
-      }
+      setSelectedHistoryRange(Number(button.dataset.range) || DEFAULT_RANGE_HOURS);
       isLiveFollowing = true;
-      applyTimeScaleDensity();
       loadHistory({ forceRange: true });
     });
   }
@@ -305,8 +302,51 @@ function wireResolutionControls() {
 function wireDriverMarkerToggle() {
   elements.showDriverMarkers?.addEventListener("change", () => {
     showDriverMarkers = Boolean(elements.showDriverMarkers.checked);
+    if (showDriverMarkers && expandHistoryRangeForDriverMarkers(lastState?.driverEvents ?? [])) {
+      return;
+    }
     setDriverMarkers(lastState?.driverEvents ?? []);
   });
+}
+
+function setSelectedHistoryRange(hours) {
+  selectedHours = Number(hours) || DEFAULT_RANGE_HOURS;
+  for (const item of elements.rangeButtons.filter((item) => item.dataset.range)) {
+    item.classList.toggle("active", Number(item.dataset.range) === selectedHours);
+  }
+  applyTimeScaleDensity();
+}
+
+function expandHistoryRangeForDriverMarkers(events) {
+  const anchorTime = latestLoadedHistoryTime();
+  const requiredHours = requiredHistoryHoursForDriverEvents(events, anchorTime);
+  if (!Number.isFinite(requiredHours) || requiredHours <= selectedHours) {
+    return false;
+  }
+
+  const ranges = availableHistoryRanges();
+  const nextRange = ranges.find((range) => range >= requiredHours) ?? ranges.at(-1);
+  if (!Number.isFinite(nextRange) || nextRange <= selectedHours) {
+    return false;
+  }
+
+  setSelectedHistoryRange(nextRange);
+  isLiveFollowing = true;
+  loadHistory({ forceRange: true });
+  return true;
+}
+
+function latestLoadedHistoryTime() {
+  const history = normalizedHistory(lastState?.history ?? []);
+  return history.at(-1)?.time ?? Math.floor(Number(lastState?.snapshot?.timestamp ?? Date.now()) / 1000);
+}
+
+function availableHistoryRanges() {
+  return elements.rangeButtons
+    .filter((item) => item.dataset.range)
+    .map((item) => Number(item.dataset.range))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
 }
 
 function wireResize() {
