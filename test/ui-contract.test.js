@@ -46,6 +46,7 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /fetch\(apiPath\("\/api\/twap-driver\/signals"/);
   assert.match(app, /driverEventsToCompactMarkers/);
   assert.match(app, /showDriverMarkers/);
+  assert.match(app, /showDriverMarkers && focusDriverMarkersOnNextRender && applyDriverMarkerVisibleWindow/);
   assert.match(app, /entry\.id === "price"/);
   assert.match(app, /key: "next1h"/);
   assert.match(app, /key: "next24h"/);

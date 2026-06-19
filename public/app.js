@@ -677,7 +677,7 @@ function render(state, options = {}) {
     setChartData(history);
   }
 
-  if (showDriverMarkers && applyDriverMarkerVisibleWindow(lastState.driverEvents ?? [])) {
+  if (showDriverMarkers && focusDriverMarkersOnNextRender && applyDriverMarkerVisibleWindow(lastState.driverEvents ?? [])) {
     focusDriverMarkersOnNextRender = false;
     hasAppliedInitialRange = true;
   } else if (options.forceRange || !hasAppliedInitialRange) {
