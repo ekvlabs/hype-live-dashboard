@@ -13,9 +13,11 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(html, /data-range="72"/);
   assert.match(html, /data-range="168"/);
   assert.match(html, /data-range="336"/);
+  assert.match(html, /class="range-btn active" data-range="336">14d/);
   assert.match(html, /data-resolution="1s"/);
   assert.match(html, /data-resolution="5s"/);
   assert.match(html, /data-resolution="1m"/);
+  assert.match(html, /class="range-btn active" data-resolution="1m">1m/);
   assert.match(html, /src="\.\/config\.js/);
   assert.match(html, /href="\.\/styles\.css/);
   assert.match(html, /src="\.\/vendor\/lightweight-charts\.standalone\.production\.js/);
@@ -57,6 +59,8 @@ test("UI shows separate summed TWAP 1h, summed TWAP 24h, and HYPE price charts",
   assert.match(app, /key: "oraclePx"/);
   assert.match(app, /const POLL_INTERVAL_MS = 1_000/);
   assert.match(app, /const LIVE_FETCH_TIMEOUT_MS = 3_000/);
+  assert.match(app, /const DEFAULT_RANGE_HOURS = 336/);
+  assert.match(app, /const DEFAULT_RESOLUTION_ID = "1m"/);
   assert.match(app, /apiPath/);
   assert.match(app, /configureAlertBotLink/);
   assert.match(app, /recordVisit/);

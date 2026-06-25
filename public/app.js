@@ -19,7 +19,8 @@ import {
 
 const POLL_INTERVAL_MS = 1_000;
 const LIVE_FETCH_TIMEOUT_MS = 3_000;
-const DEFAULT_RANGE_HOURS = 1;
+const DEFAULT_RANGE_HOURS = 336;
+const DEFAULT_RESOLUTION_ID = "1m";
 const CHART_HEIGHT = 280;
 const COMPACT_CHART_HEIGHT = 220;
 const API_BASE_URL = normalizeApiBaseUrl(window.HYPE_CONFIG?.apiBaseUrl ?? window.HYPE_API_BASE_URL ?? "");
@@ -133,7 +134,7 @@ const chartEntries = [
 ].map(createChartEntry);
 
 let selectedHours = DEFAULT_RANGE_HOURS;
-let selectedResolution = RESOLUTIONS[0];
+let selectedResolution = RESOLUTIONS.find((resolution) => resolution.id === DEFAULT_RESOLUTION_ID) ?? RESOLUTIONS[0];
 let lastState = null;
 let pollTimer = null;
 let liveFetchInFlight = false;
@@ -292,7 +293,7 @@ function wireResolutionControls() {
   for (const button of elements.resolutionButtons) {
     button.addEventListener("click", () => {
       selectedResolution =
-        RESOLUTIONS.find((resolution) => resolution.id === button.dataset.resolution) ?? RESOLUTIONS[0];
+        RESOLUTIONS.find((resolution) => resolution.id === button.dataset.resolution) ?? selectedResolution;
       for (const item of elements.resolutionButtons) {
         item.classList.toggle("active", item === button);
       }
