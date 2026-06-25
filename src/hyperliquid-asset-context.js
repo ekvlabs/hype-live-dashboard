@@ -61,6 +61,9 @@ export class HyperliquidAssetContextStream {
     });
 
     ws.addEventListener?.("message", (event) => {
+      if (this.ws !== ws) {
+        return;
+      }
       const context = extractActiveAssetContext(parseMessage(event.data), {
         coin: this.coin,
         updatedAt: this.now(),
@@ -78,7 +81,10 @@ export class HyperliquidAssetContextStream {
     });
 
     ws.addEventListener?.("error", () => {
-      ws.close?.();
+      if (this.ws === ws) {
+        this.ws = null;
+      }
+      this.scheduleReconnect();
     });
   }
 
