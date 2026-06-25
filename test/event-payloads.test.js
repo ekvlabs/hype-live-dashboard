@@ -92,8 +92,10 @@ test("server exposes compact live state separately from full history snapshots",
   assert.match(serverSource, /url\.pathname === "\/api\/history"/);
   assert.match(serverSource, /url\.pathname === "\/api\/visit"/);
   assert.match(serverSource, /sendJson\(res, compactState\(service\.getState\(\)\)\)/);
-  assert.match(serverSource, /await historyStore\.payload/);
-  assert.doesNotMatch(serverSource, /historyPayload\(service\.getState\(\), historyQuery/);
+  assert.match(serverSource, /await historyResponse\(state, query\)/);
+  assert.match(serverSource, /requestedHours <= memoryHistoryHours/);
+  assert.match(serverSource, /return historyPayload\(state, query\)/);
+  assert.match(serverSource, /return historyStore\.payload/);
 });
 
 test("server exposes sanitized TWAP_DRIVER signal events for charts", async () => {

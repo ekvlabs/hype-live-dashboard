@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { AnalyticsStore, clientIp } from "./analytics-store.js";
 import { LiveDataService } from "./data-source.js";
 import { apiCorsHeaders } from "./cors.js";
-import { compactState, sseFrame } from "./events.js";
+import { compactState, historyPayload, sseFrame } from "./events.js";
 import { HistoryStore } from "./history-store.js";
 import { TelegramAlertBot } from "./telegram-alert-bot.js";
 import { twapDriverSignalEventsPayload } from "./twap-driver-research-events.js";
@@ -52,13 +52,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/history") {
-      sendJson(
-        res,
-        await historyStore.payload({
-          config: service.getState().config,
-          options: historyQuery(url.searchParams),
-        }),
-      );
+      const state = service.getState();
+      const query = historyQuery(url.searchParams);
+      sendJson(res, await historyResponse(state, query));
       return;
     }
 
@@ -186,6 +182,19 @@ function historyQuery(params) {
     hours: params.get("hours"),
     resolutionSeconds: params.get("resolution"),
   };
+}
+
+async function historyResponse(state, query) {
+  const requestedHours = Number(query.hours);
+  const memoryHistoryHours = Number(state?.config?.memoryHistoryHours);
+  if (!Number.isFinite(requestedHours) || requestedHours <= memoryHistoryHours) {
+    return historyPayload(state, query);
+  }
+
+  return historyStore.payload({
+    config: state.config,
+    options: query,
+  });
 }
 
 async function serveStatic(pathname, res) {

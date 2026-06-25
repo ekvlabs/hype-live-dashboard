@@ -20,8 +20,10 @@ import {
 } from "./events.js";
 
 export class HistoryStore {
-  constructor(filePath) {
+  constructor(filePath, { payloadCacheMs = 60_000 } = {}) {
     this.filePath = filePath;
+    this.payloadCacheMs = Math.max(0, Number(payloadCacheMs) || 0);
+    this.payloadCache = new Map();
   }
 
   load({ now = Date.now(), maxHistoryHours = 336, compact = true } = {}) {
@@ -51,6 +53,12 @@ export class HistoryStore {
   }
 
   async payload({ config = {}, options = {} } = {}) {
+    const cacheKey = payloadCacheKey(config, options);
+    const cachedPayload = this.cachedPayload(cacheKey);
+    if (cachedPayload) {
+      return cachedPayload;
+    }
+
     const latestTimestamp = this.latestTimestamp();
     if (!Number.isFinite(latestTimestamp)) {
       return emptyHistoryPayload(config, options);
@@ -63,7 +71,9 @@ export class HistoryStore {
       resolutionSeconds: query.historyResolutionSeconds,
     });
 
-    return historyPayloadResponse(history, config, query);
+    const payload = historyPayloadResponse(history, config, query);
+    this.rememberPayload(cacheKey, payload);
+    return payload;
   }
 
   append(point) {
@@ -84,6 +94,7 @@ export class HistoryStore {
       .map((point) => JSON.stringify(point))
       .join("\n");
     writeFileSync(this.filePath, content ? `${content}\n` : "", "utf8");
+    this.payloadCache.clear();
   }
 
   ensureDir() {
@@ -171,6 +182,25 @@ export class HistoryStore {
 
     return [...buckets.values()].sort((a, b) => Number(a.t) - Number(b.t));
   }
+
+  cachedPayload(cacheKey) {
+    const cached = this.payloadCache.get(cacheKey);
+    if (!cached || cached.expiresAt <= Date.now()) {
+      this.payloadCache.delete(cacheKey);
+      return null;
+    }
+    return cached.payload;
+  }
+
+  rememberPayload(cacheKey, payload) {
+    if (!this.payloadCacheMs) {
+      return;
+    }
+    this.payloadCache.set(cacheKey, {
+      expiresAt: Date.now() + this.payloadCacheMs,
+      payload,
+    });
+  }
 }
 
 function forEachLine(content, callback) {
@@ -231,6 +261,16 @@ function latestPointFromText(text, { includeFirstLine = true } = {}) {
 function firstPartialLine(text) {
   const newlineIndex = text.indexOf("\n");
   return newlineIndex === -1 ? text : text.slice(0, newlineIndex);
+}
+
+function payloadCacheKey(config, options) {
+  return JSON.stringify({
+    maxHistoryHours: config?.maxHistoryHours,
+    intervalMs: config?.intervalMs,
+    hours: options?.hours,
+    resolutionSeconds: options?.resolutionSeconds,
+    maxPoints: options?.maxPoints,
+  });
 }
 
 function cleanHistoryPoint(point) {
