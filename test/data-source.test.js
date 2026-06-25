@@ -74,6 +74,67 @@ test("LiveDataService keeps two weeks of one-second history by default", () => {
   assert.equal(service.getState().config.historyLimit, 1_209_600);
 });
 
+test("LiveDataService can keep a shorter in-memory history window than disk retention", () => {
+  const service = new LiveDataService({
+    intervalMs: 1_000,
+    maxHistoryHours: 336,
+    memoryHistoryHours: 1,
+  });
+
+  assert.equal(service.getState().config.maxHistoryHours, 336);
+  assert.equal(service.getState().config.memoryHistoryHours, 1);
+  assert.equal(service.getState().config.memoryHistoryLimit, 3_600);
+
+  service.snapshot = {
+    timestamp: 100,
+    price: 55,
+    pressure: {
+      next1h: 10,
+      next24h: 20,
+      total: { buy: 0, sell: 0, net: 0 },
+    },
+  };
+
+  service.sampleHistory(0);
+  service.sampleHistory(60 * 60_000);
+  service.sampleHistory(2 * 60 * 60_000);
+
+  assert.deepEqual(
+    service.getState().history.map((point) => point.t),
+    [60 * 60_000, 2 * 60 * 60_000],
+  );
+});
+
+test("LiveDataService does not compact disk history from a shorter memory window", () => {
+  let replaced = false;
+  const service = new LiveDataService({
+    intervalMs: 1_000,
+    maxHistoryHours: 336,
+    memoryHistoryHours: 1,
+    historyCompactMs: 1,
+    historyStore: {
+      append() {},
+      replace() {
+        replaced = true;
+      },
+    },
+  });
+
+  service.snapshot = {
+    timestamp: 100,
+    price: 55,
+    pressure: {
+      next1h: 10,
+      next24h: 20,
+      total: { buy: 0, sell: 0, net: 0 },
+    },
+  };
+
+  service.sampleHistory(Date.now() + 2);
+
+  assert.equal(replaced, false);
+});
+
 test("LiveDataService seeds notifier with stored history", () => {
   const storedHistory = [{ t: 1_000, price: 55, next1h: 10, next24h: 20 }];
   let seededHistory = null;

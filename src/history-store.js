@@ -6,7 +6,7 @@ export class HistoryStore {
     this.filePath = filePath;
   }
 
-  load({ now = Date.now(), maxHistoryHours = 336 } = {}) {
+  load({ now = Date.now(), maxHistoryHours = 336, compact = true } = {}) {
     if (!this.filePath || !existsSync(this.filePath)) {
       return [];
     }
@@ -26,7 +26,7 @@ export class HistoryStore {
         shouldCompactFile = true;
       }
     });
-    if (shouldCompactFile) {
+    if (compact && shouldCompactFile) {
       this.replace(history);
     }
     return history;

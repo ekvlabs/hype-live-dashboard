@@ -20,11 +20,15 @@ const port = Number(process.env.PORT ?? 4173);
 const host = process.env.HOST ?? "127.0.0.1";
 const historyFile = process.env.HISTORY_FILE ?? join(rootDir, "data", "history.ndjson");
 const analyticsFile = process.env.ANALYTICS_DB ?? join(rootDir, "data", "analytics.sqlite");
+const maxHistoryHours = Number(process.env.MAX_HISTORY_HOURS ?? 336);
+const memoryHistoryHours = Number(process.env.MEMORY_HISTORY_HOURS ?? 48);
 
 const telegramBot = TelegramAlertBot.fromEnv(process.env);
 const analyticsStore = new AnalyticsStore(analyticsFile);
 
 const service = new LiveDataService({
+  maxHistoryHours,
+  memoryHistoryHours,
   historyStore: new HistoryStore(historyFile),
   notifier: telegramBot,
 });

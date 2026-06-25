@@ -87,6 +87,24 @@ test("HistoryStore default load keeps two weeks", async () => {
   }
 });
 
+test("HistoryStore can load a window without compacting the source file", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hype-history-no-compact-"));
+  try {
+    const filePath = join(dir, "history.ndjson");
+    const store = new HistoryStore(filePath);
+
+    store.append({ t: 0, price: 50, next1h: 1, next24h: 2 });
+    store.append({ t: 3_600_000, price: 51, next1h: 3, next24h: 4 });
+
+    assert.deepEqual(store.load({ now: 7_200_000, maxHistoryHours: 1, compact: false }), [
+      { t: 3_600_000, price: 51, next1h: 3, next24h: 4 },
+    ]);
+    assert.equal((await readFile(filePath, "utf8")).trim().split("\n").length, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("HistoryStore load avoids splitting the full history file into line arrays", async () => {
   const source = await readFile(new URL("../src/history-store.js", import.meta.url), "utf8");
 

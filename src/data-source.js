@@ -13,6 +13,7 @@ export class LiveDataService {
     fetchFn = globalThis.fetch,
     intervalMs = 1_000,
     maxHistoryHours = 336,
+    memoryHistoryHours = maxHistoryHours,
     historyCompactMs = 10 * 60 * 1000,
     historyStore = null,
     notifier = null,
@@ -22,7 +23,12 @@ export class LiveDataService {
     this.fetchFn = fetchFn;
     this.intervalMs = intervalMs;
     this.maxHistoryHours = maxHistoryHours;
+    this.memoryHistoryHours = Math.min(
+      this.maxHistoryHours,
+      Math.max(1, Number(memoryHistoryHours) || this.maxHistoryHours),
+    );
     this.historyLimit = historyPointLimit(intervalMs, maxHistoryHours);
+    this.memoryHistoryLimit = historyPointLimit(intervalMs, this.memoryHistoryHours);
     this.historyCompactMs = historyCompactMs;
     this.history = [];
     this.listeners = new Set();
@@ -92,7 +98,11 @@ export class LiveDataService {
     }
 
     try {
-      this.history = this.historyStore.load({ now, maxHistoryHours: this.maxHistoryHours });
+      this.history = this.historyStore.load({
+        now,
+        maxHistoryHours: this.memoryHistoryHours,
+        compact: this.memoryHistoryHours >= this.maxHistoryHours,
+      });
       this.notifier?.seedHistory?.(this.history);
     } catch (error) {
       console.error("History load failed:", error.message);
@@ -108,6 +118,8 @@ export class LiveDataService {
         intervalMs: this.intervalMs,
         maxHistoryHours: this.maxHistoryHours,
         historyLimit: this.historyLimit,
+        memoryHistoryHours: this.memoryHistoryHours,
+        memoryHistoryLimit: this.memoryHistoryLimit,
       },
     };
   }
@@ -154,9 +166,9 @@ export class LiveDataService {
 
     const point = toHistoryPoint(this.snapshot, now);
     this.history.push(point);
-    this.history = trimHistory(this.history, now, this.maxHistoryHours);
-    if (this.history.length > this.historyLimit) {
-      this.history.splice(0, this.history.length - this.historyLimit);
+    this.history = trimHistory(this.history, now, this.memoryHistoryHours);
+    if (this.history.length > this.memoryHistoryLimit) {
+      this.history.splice(0, this.history.length - this.memoryHistoryLimit);
     }
     this.persistHistoryPoint(point, now);
     this.emit("history-point", historyPointEvent(point));
@@ -206,7 +218,9 @@ export class LiveDataService {
     try {
       this.historyStore.append(point);
       if (now >= this.nextHistoryCompactAt) {
-        this.historyStore.replace(this.history);
+        if (this.memoryHistoryHours >= this.maxHistoryHours) {
+          this.historyStore.replace(this.history);
+        }
         this.nextHistoryCompactAt = now + this.historyCompactMs;
       }
     } catch (error) {
