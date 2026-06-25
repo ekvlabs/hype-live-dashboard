@@ -105,6 +105,69 @@ test("HistoryStore can load a window without compacting the source file", async 
   }
 });
 
+test("HistoryStore builds history payloads from disk windows", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hype-history-payload-"));
+  try {
+    const filePath = join(dir, "history.ndjson");
+    const store = new HistoryStore(filePath);
+    const hour = 60 * 60_000;
+
+    store.append({ t: 0, price: 50, next1h: 1, next24h: 2 });
+    store.append({ t: hour, price: 51, next1h: 3, next24h: 4 });
+    store.append({ t: hour + 1_000, price: 52, next1h: 5, next24h: 6 });
+    store.append({ t: 2 * hour, price: 53, next1h: 7, next24h: 8 });
+
+    assert.equal(store.latestTimestamp(), 2 * hour);
+    assert.deepEqual(
+      await store.payload({
+        config: { intervalMs: 1_000, maxHistoryHours: 336 },
+        options: { hours: 1, resolutionSeconds: 1, maxPoints: 2 },
+      }),
+      {
+        history: [
+          { t: hour + 1_000, price: 52, next1h: 5, next24h: 6 },
+          { t: 2 * hour, price: 53, next1h: 7, next24h: 8 },
+        ],
+        config: {
+          intervalMs: 1_000,
+          maxHistoryHours: 336,
+          historyResolutionSeconds: 1800,
+          historyHours: 1,
+          historyPoints: 2,
+        },
+      },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("HistoryStore returns an empty payload for missing disk history", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hype-history-empty-payload-"));
+  try {
+    const store = new HistoryStore(join(dir, "history.ndjson"));
+
+    assert.deepEqual(
+      await store.payload({
+        config: { intervalMs: 1_000, maxHistoryHours: 336 },
+        options: { hours: 24, resolutionSeconds: 1 },
+      }),
+      {
+        history: [],
+        config: {
+          intervalMs: 1_000,
+          maxHistoryHours: 336,
+          historyResolutionSeconds: 1,
+          historyHours: 24,
+          historyPoints: 0,
+        },
+      },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("HistoryStore load avoids splitting the full history file into line arrays", async () => {
   const source = await readFile(new URL("../src/history-store.js", import.meta.url), "utf8");
 

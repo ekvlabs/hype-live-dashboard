@@ -1,5 +1,23 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname } from "node:path";
+import { createInterface } from "node:readline";
+
+import {
+  emptyHistoryPayload,
+  historyPayloadQuery,
+  historyPayloadResponse,
+} from "./events.js";
 
 export class HistoryStore {
   constructor(filePath) {
@@ -32,6 +50,22 @@ export class HistoryStore {
     return history;
   }
 
+  async payload({ config = {}, options = {} } = {}) {
+    const latestTimestamp = this.latestTimestamp();
+    if (!Number.isFinite(latestTimestamp)) {
+      return emptyHistoryPayload(config, options);
+    }
+
+    const query = historyPayloadQuery(config, options, latestTimestamp);
+    const history = await this.compactedWindow({
+      from: query.from,
+      to: query.latestTimestamp,
+      resolutionSeconds: query.historyResolutionSeconds,
+    });
+
+    return historyPayloadResponse(history, config, query);
+  }
+
   append(point) {
     const cleanPoint = cleanHistoryPoint(point);
     if (!cleanPoint) {
@@ -54,6 +88,88 @@ export class HistoryStore {
 
   ensureDir() {
     mkdirSync(dirname(this.filePath), { recursive: true });
+  }
+
+  latestTimestamp() {
+    const point = this.latestPoint();
+    return Number(point?.t);
+  }
+
+  latestPoint() {
+    if (!this.filePath || !existsSync(this.filePath)) {
+      return null;
+    }
+
+    let fd = null;
+    try {
+      const { size } = statSync(this.filePath);
+      if (!size) {
+        return null;
+      }
+
+      fd = openSync(this.filePath, "r");
+      const chunkSize = 64 * 1024;
+      const buffer = Buffer.allocUnsafe(chunkSize);
+      let position = size;
+      let tail = "";
+
+      while (position > 0) {
+        const length = Math.min(chunkSize, position);
+        position -= length;
+        const bytesRead = readSync(fd, buffer, 0, length, position);
+        tail = buffer.toString("utf8", 0, bytesRead) + tail;
+
+        const point = latestPointFromText(tail, { includeFirstLine: position === 0 });
+        if (point) {
+          return point;
+        }
+        tail = firstPartialLine(tail);
+      }
+    } finally {
+      if (fd !== null) {
+        closeSync(fd);
+      }
+    }
+
+    return null;
+  }
+
+  async compactedWindow({ from, to, resolutionSeconds }) {
+    if (!this.filePath || !existsSync(this.filePath) || !Number.isFinite(from) || !Number.isFinite(to)) {
+      return [];
+    }
+
+    const bucketMs = Math.max(1, Number(resolutionSeconds) || 1) * 1000;
+    const buckets = new Map();
+    const lines = createInterface({
+      input: createReadStream(this.filePath, { encoding: "utf8" }),
+      crlfDelay: Infinity,
+    });
+
+    try {
+      for await (const line of lines) {
+        const timestamp = timestampFromLine(line);
+        if (!Number.isFinite(timestamp)) {
+          continue;
+        }
+        if (timestamp < from) {
+          continue;
+        }
+        if (timestamp > to) {
+          lines.close();
+          break;
+        }
+
+        const point = parseLine(line);
+        if (point) {
+          buckets.set(Math.floor(Number(point.t) / bucketMs) * bucketMs, point);
+        }
+      }
+    } finally {
+      lines.close();
+    }
+
+    return [...buckets.values()].sort((a, b) => Number(a.t) - Number(b.t));
   }
 }
 
@@ -82,6 +198,39 @@ function parseLine(line) {
   } catch {
     return null;
   }
+}
+
+function timestampFromLine(line) {
+  const match = /"t"\s*:\s*(-?\d+(?:\.\d+)?)/.exec(line);
+  if (!match) {
+    const point = parseLine(line);
+    return Number(point?.t);
+  }
+  return Number(match[1]);
+}
+
+function latestPointFromText(text, { includeFirstLine = true } = {}) {
+  let end = text.length;
+  while (end > 0) {
+    const newlineIndex = text.lastIndexOf("\n", end - 1);
+    const start = newlineIndex + 1;
+    if (includeFirstLine || start > 0) {
+      const point = parseLine(text.slice(start, end));
+      if (point) {
+        return point;
+      }
+    }
+    if (newlineIndex === -1) {
+      break;
+    }
+    end = newlineIndex;
+  }
+  return null;
+}
+
+function firstPartialLine(text) {
+  const newlineIndex = text.indexOf("\n");
+  return newlineIndex === -1 ? text : text.slice(0, newlineIndex);
 }
 
 function cleanHistoryPoint(point) {

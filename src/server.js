@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { AnalyticsStore, clientIp } from "./analytics-store.js";
 import { LiveDataService } from "./data-source.js";
 import { apiCorsHeaders } from "./cors.js";
-import { compactState, historyPayload, sseFrame } from "./events.js";
+import { compactState, sseFrame } from "./events.js";
 import { HistoryStore } from "./history-store.js";
 import { TelegramAlertBot } from "./telegram-alert-bot.js";
 import { twapDriverSignalEventsPayload } from "./twap-driver-research-events.js";
@@ -25,11 +25,12 @@ const memoryHistoryHours = Number(process.env.MEMORY_HISTORY_HOURS ?? 48);
 
 const telegramBot = TelegramAlertBot.fromEnv(process.env);
 const analyticsStore = new AnalyticsStore(analyticsFile);
+const historyStore = new HistoryStore(historyFile);
 
 const service = new LiveDataService({
   maxHistoryHours,
   memoryHistoryHours,
-  historyStore: new HistoryStore(historyFile),
+  historyStore,
   notifier: telegramBot,
 });
 
@@ -51,7 +52,13 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/history") {
-      sendJson(res, historyPayload(service.getState(), historyQuery(url.searchParams)));
+      sendJson(
+        res,
+        await historyStore.payload({
+          config: service.getState().config,
+          options: historyQuery(url.searchParams),
+        }),
+      );
       return;
     }
 

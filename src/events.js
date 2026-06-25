@@ -11,41 +11,51 @@ export function compactState(state) {
 
 export function historyPayload(state, options = {}) {
   const config = state?.config ?? {};
-  const maxHistoryHours = Math.max(1, Number(config.maxHistoryHours) || 336);
-  const historyHours = clampNumber(options.hours, 1, maxHistoryHours, Math.min(24, maxHistoryHours));
-  const requestedResolutionSeconds = Math.max(1, Number(options.resolutionSeconds) || 1);
-  const maxPoints = Math.max(1, Number(options.maxPoints) || DEFAULT_HISTORY_MAX_POINTS);
   const history = Array.isArray(state?.history) ? state.history : [];
   const latestTimestamp = latestHistoryTimestamp(history);
 
   if (!Number.isFinite(latestTimestamp)) {
-    return {
-      history: [],
-      config: {
-        ...config,
-        historyResolutionSeconds: requestedResolutionSeconds,
-        historyHours,
-        historyPoints: 0,
-      },
-    };
+    return emptyHistoryPayload(config, options);
   }
 
-  const from = latestTimestamp - historyHours * 60 * 60_000;
-  const windowHistory = history.filter((point) => Number(point?.t) >= from && Number(point?.t) <= latestTimestamp);
-  const effectiveResolutionSeconds = effectiveHistoryResolutionSeconds(
-    historyHours,
-    requestedResolutionSeconds,
-    maxPoints,
-  );
-  const compactedHistory = compactHistoryByResolution(windowHistory, effectiveResolutionSeconds);
+  const query = historyPayloadQuery(config, options, latestTimestamp);
+  const windowHistory = history.filter((point) => Number(point?.t) >= query.from && Number(point?.t) <= latestTimestamp);
+  const compactedHistory = compactHistoryByResolution(windowHistory, query.historyResolutionSeconds);
+
+  return historyPayloadResponse(compactedHistory, config, query);
+}
+
+export function emptyHistoryPayload(config = {}, options = {}) {
+  const query = historyPayloadQuery(config, options);
+
+  return historyPayloadResponse([], config, query);
+}
+
+export function historyPayloadQuery(config = {}, options = {}, latestTimestamp = NaN) {
+  const maxHistoryHours = Math.max(1, Number(config.maxHistoryHours) || 336);
+  const historyHours = clampNumber(options.hours, 1, maxHistoryHours, Math.min(24, maxHistoryHours));
+  const requestedResolutionSeconds = Math.max(1, Number(options.resolutionSeconds) || 1);
+  const maxPoints = Math.max(1, Number(options.maxPoints) || DEFAULT_HISTORY_MAX_POINTS);
+  const historyResolutionSeconds = Number.isFinite(latestTimestamp)
+    ? effectiveHistoryResolutionSeconds(historyHours, requestedResolutionSeconds, maxPoints)
+    : requestedResolutionSeconds;
 
   return {
-    history: compactedHistory,
+    historyHours,
+    historyResolutionSeconds,
+    latestTimestamp,
+    from: Number.isFinite(latestTimestamp) ? latestTimestamp - historyHours * 60 * 60_000 : NaN,
+  };
+}
+
+export function historyPayloadResponse(history, config = {}, query = {}) {
+  return {
+    history,
     config: {
       ...config,
-      historyResolutionSeconds: effectiveResolutionSeconds,
-      historyHours,
-      historyPoints: compactedHistory.length,
+      historyResolutionSeconds: query.historyResolutionSeconds,
+      historyHours: query.historyHours,
+      historyPoints: history.length,
     },
   };
 }
@@ -70,7 +80,7 @@ function roundHistoryResolutionSeconds(seconds) {
   return HISTORY_RESOLUTION_STEPS_SECONDS.find((step) => step >= minimum) ?? minimum;
 }
 
-function compactHistoryByResolution(history, resolutionSeconds) {
+export function compactHistoryByResolution(history, resolutionSeconds) {
   const bucketMs = Math.max(1, Number(resolutionSeconds) || 1) * 1000;
   const buckets = new Map();
 
